@@ -1,0 +1,32 @@
+# FastAPI and web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+websockets==12.0
+
+# Redis client
+redis[hiredis]==5.0.1
+
+# HTTP client
+httpx==0.25.2
+
+# Natural Language Processing
+transformers==4.35.2
+torch==2.1.1
+sentence-transformers==2.2.2
+tokenizers==0.15.0
+
+# Data processing
+numpy==1.24.4
+pandas==2.1.4
+
+# Monitoring and metrics
+prometheus-client==0.19.0
+
+# Logging and utilities
+python-json-logger==2.0.7
+
+# Development and testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0

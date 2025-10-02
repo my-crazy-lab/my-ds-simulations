@@ -1,0 +1,93 @@
+{
+  "demo_id": "capstone_demo_1759378340",
+  "start_time": "2025-10-02T11:12:20.859648",
+  "phases": {
+    "infrastructure_setup": {
+      "phase": "infrastructure_setup",
+      "start_time": "2025-10-02T11:12:20.859709",
+      "steps": [],
+      "success": false,
+      "error": "[Errno 2] No such file or directory: 'ai-ml-system'",
+      "end_time": "2025-10-02T11:12:20.860630"
+    },
+    "health_validation": {
+      "phase": "health_validation",
+      "start_time": "2025-10-02T11:12:20.860657",
+      "validations": [
+        {
+          "validation": "kafka_connectivity",
+          "success": false,
+          "details": {
+            "success": false,
+            "error": "No module named 'kafka'"
+          }
+        },
+        {
+          "validation": "redis_connectivity",
+          "success": true,
+          "details": {
+            "success": true,
+            "message": "Redis connectivity verified"
+          }
+        },
+        {
+          "validation": "milvus_connectivity",
+          "success": false,
+          "details": {
+            "success": false,
+            "error": "Milvus port not accessible"
+          }
+        },
+        {
+          "validation": "service_endpoints",
+          "success": false,
+          "details": {
+            "success": false,
+            "healthy_endpoints": 1,
+            "total_endpoints": 3
+          }
+        }
+      ],
+      "success": false,
+      "end_time": "2025-10-02T11:12:21.066715"
+    },
+    "e2e_testing": {
+      "phase": "e2e_testing",
+      "start_time": "2025-10-02T11:12:21.066737",
+      "success": false,
+      "error": "No module named 'end_to_end_test'",
+      "end_time": "2025-10-02T11:12:21.066826"
+    },
+    "incident_simulation": {
+      "phase": "incident_simulation",
+      "start_time": "2025-10-02T11:12:21.066840",
+      "success": false,
+      "error": "No module named 'incident_orchestrator'",
+      "end_time": "2025-10-02T11:12:21.066913"
+    },
+    "chaos_engineering": {
+      "phase": "chaos_engineering",
+      "start_time": "2025-10-02T11:12:21.066926",
+      "success": false,
+      "error": "No module named 'chaos_controller'",
+      "end_time": "2025-10-02T11:12:21.066994"
+    },
+    "performance_validation": {
+      "phase": "performance_validation",
+      "start_time": "2025-10-02T11:12:21.067008",
+      "success": true,
+      "load_test_results": [],
+      "end_time": "2025-10-02T11:12:21.067046"
+    },
+    "report_generation": {
+      "phase": "report_generation",
+      "start_time": "2025-10-02T11:12:21.067059",
+      "success": true,
+      "report_file": "capstone_demo_report_capstone_demo_1759378340.json",
+      "end_time": "2025-10-02T11:12:21.067307"
+    }
+  },
+  "overall_success": false,
+  "end_time": "2025-10-02T11:12:21.067311",
+  "duration_minutes": 0.00346105
+}

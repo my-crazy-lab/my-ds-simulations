@@ -1,0 +1,464 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Primary Database
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: postgres-primary
+    environment:
+      POSTGRES_DB: microservices
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replicator_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-primary.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./docker/postgres/postgresql-primary.conf:/etc/postgresql/postgresql.conf
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # PostgreSQL Read Replica
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: postgres-replica
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGUSER: postgres
+      POSTGRES_PRIMARY_HOST: postgres-primary
+      POSTGRES_PRIMARY_PORT: 5432
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replicator_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./docker/postgres/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # PostgreSQL Shard 1
+  postgres-shard1:
+    image: postgres:15-alpine
+    container_name: postgres-shard1
+    environment:
+      POSTGRES_DB: microservices_shard1
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_shard1_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-shard.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # PostgreSQL Shard 2
+  postgres-shard2:
+    image: postgres:15-alpine
+    container_name: postgres-shard2
+    environment:
+      POSTGRES_DB: microservices_shard2
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_shard2_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-shard.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # MongoDB Primary
+  mongodb-primary:
+    image: mongo:7.0
+    container_name: mongodb-primary
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+      MONGO_INITDB_DATABASE: microservices
+    volumes:
+      - mongodb_primary_data:/data/db
+      - ./docker/mongodb/init-replica-set.js:/docker-entrypoint-initdb.d/init-replica-set.js
+    command: mongod --replSet rs0 --bind_ip_all
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # MongoDB Secondary 1
+  mongodb-secondary1:
+    image: mongo:7.0
+    container_name: mongodb-secondary1
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+    volumes:
+      - mongodb_secondary1_data:/data/db
+    command: mongod --replSet rs0 --bind_ip_all
+    depends_on:
+      - mongodb-primary
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # MongoDB Secondary 2
+  mongodb-secondary2:
+    image: mongo:7.0
+    container_name: mongodb-secondary2
+    ports:
+      - "27019:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+    volumes:
+      - mongodb_secondary2_data:/data/db
+    command: mongod --replSet rs0 --bind_ip_all
+    depends_on:
+      - mongodb-primary
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # ClickHouse for Analytics
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    container_name: clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: admin
+      CLICKHOUSE_PASSWORD: admin123
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./docker/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./docker/clickhouse/config.xml:/etc/clickhouse-server/config.xml
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # ClickHouse Replica
+  clickhouse-replica:
+    image: clickhouse/clickhouse-server:23.8
+    container_name: clickhouse-replica
+    ports:
+      - "8124:8123"
+      - "9001:9000"
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: admin
+      CLICKHOUSE_PASSWORD: admin123
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_replica_data:/var/lib/clickhouse
+      - ./docker/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./docker/clickhouse/config-replica.xml:/etc/clickhouse-server/config.xml
+    depends_on:
+      - clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - microservices
+
+  # Redis Cluster Node 1
+  redis-node1:
+    image: redis:7-alpine
+    container_name: redis-node1
+    ports:
+      - "7001:7001"
+    command: redis-server --port 7001 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    volumes:
+      - redis_node1_data:/data
+    networks:
+      - microservices
+
+  # Redis Cluster Node 2
+  redis-node2:
+    image: redis:7-alpine
+    container_name: redis-node2
+    ports:
+      - "7002:7002"
+    command: redis-server --port 7002 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    volumes:
+      - redis_node2_data:/data
+    networks:
+      - microservices
+
+  # Redis Cluster Node 3
+  redis-node3:
+    image: redis:7-alpine
+    container_name: redis-node3
+    ports:
+      - "7003:7003"
+    command: redis-server --port 7003 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    volumes:
+      - redis_node3_data:/data
+    networks:
+      - microservices
+
+  # Sharding Proxy
+  sharding-proxy:
+    build:
+      context: ../services/sharding-proxy
+      dockerfile: Dockerfile
+    container_name: sharding-proxy
+    ports:
+      - "5436:5432"
+    environment:
+      - SHARD1_URL=postgres://postgres:postgres@postgres-shard1:5432/microservices_shard1
+      - SHARD2_URL=postgres://postgres:postgres@postgres-shard2:5432/microservices_shard2
+      - PRIMARY_URL=postgres://postgres:postgres@postgres-primary:5432/microservices
+      - REPLICA_URL=postgres://postgres:postgres@postgres-replica:5432/microservices
+    depends_on:
+      - postgres-primary
+      - postgres-replica
+      - postgres-shard1
+      - postgres-shard2
+    networks:
+      - microservices
+
+  # CQRS Event Store
+  event-store:
+    build:
+      context: ../services/event-store
+      dockerfile: Dockerfile
+    container_name: event-store
+    ports:
+      - "8005:8080"
+    environment:
+      - POSTGRES_URL=postgres://postgres:postgres@postgres-primary:5432/microservices
+      - MONGODB_URL=mongodb://admin:admin123@mongodb-primary:27017/microservices?authSource=admin
+      - CLICKHOUSE_URL=http://admin:admin123@clickhouse:8123/analytics
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - postgres-primary
+      - mongodb-primary
+      - clickhouse
+      - kafka
+    networks:
+      - microservices
+
+  # Sharding Proxy Service
+  sharding-proxy:
+    build:
+      context: ../services/sharding-proxy
+      dockerfile: Dockerfile
+    ports:
+      - "5433:5432"
+    environment:
+      - PRIMARY_URL=postgresql://postgres:postgres@postgres-primary:5432/microservices?sslmode=disable
+      - REPLICA_URL=postgresql://postgres:postgres@postgres-replica:5432/microservices?sslmode=disable
+      - SHARD1_URL=postgresql://postgres:postgres@postgres-shard1:5432/microservices_shard1?sslmode=disable
+      - SHARD2_URL=postgresql://postgres:postgres@postgres-shard2:5432/microservices_shard2?sslmode=disable
+    depends_on:
+      - postgres-primary
+      - postgres-replica
+      - postgres-shard1
+      - postgres-shard2
+    networks:
+      - microservices
+
+  # CQRS Event Store Service
+  cqrs-event-store:
+    build:
+      context: ../services/cqrs-event-store
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8080"
+      - "9090:9090"
+    environment:
+      - POSTGRES_URL=postgresql://postgres:postgres@postgres-primary:5432/microservices?sslmode=disable
+      - MONGO_URL=mongodb://mongodb-primary:27017,mongodb-secondary1:27017,mongodb-secondary2:27017/microservices?replicaSet=rs0
+      - CLICKHOUSE_URL=tcp://clickhouse:9000/analytics
+      - KAFKA_BROKERS=kafka:29092
+      - REDIS_URL=redis://redis-node1:7001
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    depends_on:
+      - postgres-primary
+      - mongodb-primary
+      - clickhouse
+      - kafka
+      - redis-node1
+    networks:
+      - microservices
+
+  # Sync Service for Offline-Online Sync
+  sync-service:
+    build:
+      context: ../services/sync-service
+      dockerfile: Dockerfile
+    ports:
+      - "8091:8080"
+      - "9091:9090"
+    environment:
+      - POSTGRES_URL=postgresql://postgres:postgres@postgres-primary:5432/microservices?sslmode=disable
+      - MONGO_URL=mongodb://mongodb-primary:27017,mongodb-secondary1:27017,mongodb-secondary2:27017/microservices?replicaSet=rs0
+      - REDIS_URL=redis://redis-node1:7001
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    depends_on:
+      - postgres-primary
+      - mongodb-primary
+      - redis-node1
+    networks:
+      - microservices
+
+  # Analytics ETL Service
+  analytics-etl:
+    build:
+      context: ../services/analytics-etl
+      dockerfile: Dockerfile
+    ports:
+      - "8092:8080"
+      - "9092:9090"
+    environment:
+      - POSTGRES_URL=postgresql://postgres:postgres@postgres-primary:5432/microservices?sslmode=disable
+      - CLICKHOUSE_URL=tcp://clickhouse:9000/analytics
+      - KAFKA_BROKERS=kafka:29092
+      - REDIS_URL=redis://redis-node1:7001
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    depends_on:
+      - postgres-primary
+      - clickhouse
+      - kafka
+      - redis-node1
+    networks:
+      - microservices
+
+  # Disaster Recovery Service
+  disaster-recovery:
+    build:
+      context: ../services/disaster-recovery
+      dockerfile: Dockerfile
+    ports:
+      - "8093:8080"
+      - "9093:9090"
+    environment:
+      - PRIMARY_DATABASE_URL=postgresql://postgres:postgres@postgres-primary:5432/microservices?sslmode=disable
+      - REPLICA_DATABASE_URL=postgresql://postgres:postgres@postgres-replica:5432/microservices?sslmode=disable
+      - S3_BUCKET=microservices-backups
+      - S3_REGION=us-west-2
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    depends_on:
+      - postgres-primary
+      - postgres-replica
+    networks:
+      - microservices
+
+  # Schema Migration Service
+  schema-migration:
+    build:
+      context: ../services/schema-migration
+      dockerfile: Dockerfile
+    ports:
+      - "8094:8080"
+      - "9094:9090"
+    environment:
+      - PRIMARY_DATABASE_URL=postgresql://postgres:postgres@postgres-primary:5432/microservices?sslmode=disable
+      - REPLICA_DATABASE_URL=postgresql://postgres:postgres@postgres-replica:5432/microservices?sslmode=disable
+      - REDIS_URL=redis://redis-node1:7001
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    depends_on:
+      - postgres-primary
+      - postgres-replica
+      - redis-node1
+    networks:
+      - microservices
+
+  # Consistency Testing Service
+  consistency-testing:
+    build:
+      context: ../services/consistency-testing
+      dockerfile: Dockerfile
+    ports:
+      - "8095:8080"
+      - "9095:9090"
+    environment:
+      - PRIMARY_DATABASE_URL=postgresql://postgres:postgres@postgres-primary:5432/microservices?sslmode=disable
+      - REPLICA_DATABASE_URLS=postgresql://postgres:postgres@postgres-replica:5432/microservices?sslmode=disable
+      - MONGO_CLUSTER_URLS=mongodb://mongodb-primary:27017,mongodb-secondary1:27017,mongodb-secondary2:27017/microservices?replicaSet=rs0
+      - CLICKHOUSE_CLUSTER_URLS=tcp://clickhouse:9000/analytics,tcp://clickhouse-replica:9000/analytics
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    depends_on:
+      - postgres-primary
+      - postgres-replica
+      - mongodb-primary
+      - clickhouse
+    networks:
+      - microservices
+
+volumes:
+  postgres_primary_data:
+  postgres_replica_data:
+  postgres_shard1_data:
+  postgres_shard2_data:
+  mongodb_primary_data:
+  mongodb_secondary1_data:
+  mongodb_secondary2_data:
+  clickhouse_data:
+  clickhouse_replica_data:
+  redis_node1_data:
+  redis_node2_data:
+  redis_node3_data:
+
+networks:
+  microservices:
+    driver: bridge

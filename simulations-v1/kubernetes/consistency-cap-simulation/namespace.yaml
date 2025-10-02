@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: consistency-simulation
+  labels:
+    name: consistency-simulation
+    purpose: chaos-engineering
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: consistency-simulation-quota
+  namespace: consistency-simulation
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    persistentvolumeclaims: "20"
+    pods: "50"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: consistency-simulation-limits
+  namespace: consistency-simulation
+spec:
+  limits:
+  - default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Container

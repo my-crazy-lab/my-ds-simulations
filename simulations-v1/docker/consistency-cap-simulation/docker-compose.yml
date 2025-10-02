@@ -1,0 +1,386 @@
+version: '3.8'
+
+services:
+  # ===== RAFT CONSENSUS SIMULATION =====
+  
+  # etcd cluster for Raft consensus testing
+  etcd1:
+    image: quay.io/coreos/etcd:v3.5.10
+    container_name: etcd1
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd1
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd1:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd1:2380
+      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - --initial-cluster-token=etcd-cluster-1
+      - --initial-cluster-state=new
+      - --log-level=info
+      - --logger=zap
+      - --log-outputs=stderr
+    volumes:
+      - etcd1_data:/etcd-data
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    networks:
+      - raft_network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  etcd2:
+    image: quay.io/coreos/etcd:v3.5.10
+    container_name: etcd2
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd2
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd2:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd2:2380
+      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - --initial-cluster-token=etcd-cluster-1
+      - --initial-cluster-state=new
+      - --log-level=info
+      - --logger=zap
+      - --log-outputs=stderr
+    volumes:
+      - etcd2_data:/etcd-data
+    ports:
+      - "2389:2379"
+      - "2390:2380"
+    networks:
+      - raft_network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  etcd3:
+    image: quay.io/coreos/etcd:v3.5.10
+    container_name: etcd3
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd3
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd3:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd3:2380
+      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - --initial-cluster-token=etcd-cluster-1
+      - --initial-cluster-state=new
+      - --log-level=info
+      - --logger=zap
+      - --log-outputs=stderr
+    volumes:
+      - etcd3_data:/etcd-data
+    ports:
+      - "2399:2379"
+      - "2400:2380"
+    networks:
+      - raft_network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===== MULTI-MASTER DATABASE SIMULATION =====
+  
+  # PostgreSQL Primary
+  postgres_primary:
+    image: postgres:15-alpine
+    container_name: postgres_primary
+    environment:
+      POSTGRES_DB: consistency_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replicator_pass
+    command: |
+      postgres 
+      -c wal_level=replica 
+      -c max_wal_senders=3 
+      -c max_replication_slots=3
+      -c synchronous_commit=on
+      -c synchronous_standby_names='replica1,replica2'
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./postgres/init-primary.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    ports:
+      - "5432:5432"
+    networks:
+      - db_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL Replica 1
+  postgres_replica1:
+    image: postgres:15-alpine
+    container_name: postgres_replica1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGUSER: postgres
+      POSTGRES_PRIMARY_HOST: postgres_primary
+      POSTGRES_PRIMARY_PORT: 5432
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replicator_pass
+    command: |
+      bash -c "
+      until pg_basebackup -h postgres_primary -D /var/lib/postgresql/data -U replicator -v -P -W; do
+        echo 'Waiting for primary to be available...'
+        sleep 1s
+      done
+      echo 'standby_mode = on' >> /var/lib/postgresql/data/recovery.conf
+      echo 'primary_conninfo = host=postgres_primary port=5432 user=replicator application_name=replica1' >> /var/lib/postgresql/data/recovery.conf
+      postgres
+      "
+    volumes:
+      - postgres_replica1_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - db_network
+    depends_on:
+      - postgres_primary
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB Replica Set
+  mongo1:
+    image: mongo:7.0
+    container_name: mongo1
+    command: mongod --replSet rs0 --bind_ip_all --port 27017
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo1_data:/data/db
+    networks:
+      - db_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo2:
+    image: mongo:7.0
+    container_name: mongo2
+    command: mongod --replSet rs0 --bind_ip_all --port 27017
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo2_data:/data/db
+    networks:
+      - db_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo3:
+    image: mongo:7.0
+    container_name: mongo3
+    command: mongod --replSet rs0 --bind_ip_all --port 27017
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo3_data:/data/db
+    networks:
+      - db_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB Replica Set Initialization
+  mongo_init:
+    image: mongo:7.0
+    container_name: mongo_init
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    command: |
+      bash -c "
+      sleep 10
+      mongosh --host mongo1:27017 --eval '
+      rs.initiate({
+        _id: \"rs0\",
+        members: [
+          {_id: 0, host: \"mongo1:27017\", priority: 2},
+          {_id: 1, host: \"mongo2:27017\", priority: 1},
+          {_id: 2, host: \"mongo3:27017\", priority: 1}
+        ]
+      })
+      '
+      "
+    networks:
+      - db_network
+
+  # ===== CRDT TESTING SERVICE =====
+  
+  crdt_node1:
+    build:
+      context: ./crdt-service
+      dockerfile: Dockerfile
+    container_name: crdt_node1
+    environment:
+      - NODE_ID=node1
+      - CLUSTER_NODES=crdt_node1:8080,crdt_node2:8080,crdt_node3:8080
+      - GOSSIP_INTERVAL=1000
+    ports:
+      - "8081:8080"
+    networks:
+      - crdt_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  crdt_node2:
+    build:
+      context: ./crdt-service
+      dockerfile: Dockerfile
+    container_name: crdt_node2
+    environment:
+      - NODE_ID=node2
+      - CLUSTER_NODES=crdt_node1:8080,crdt_node2:8080,crdt_node3:8080
+      - GOSSIP_INTERVAL=1000
+    ports:
+      - "8082:8080"
+    networks:
+      - crdt_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  crdt_node3:
+    build:
+      context: ./crdt-service
+      dockerfile: Dockerfile
+    container_name: crdt_node3
+    environment:
+      - NODE_ID=node3
+      - CLUSTER_NODES=crdt_node1:8080,crdt_node2:8080,crdt_node3:8080
+      - GOSSIP_INTERVAL=1000
+    ports:
+      - "8083:8080"
+    networks:
+      - crdt_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===== CHAOS ENGINEERING TOOLS =====
+  
+  # Network chaos controller
+  chaos_controller:
+    build:
+      context: ./chaos-controller
+      dockerfile: Dockerfile
+    container_name: chaos_controller
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9090:8080"
+    networks:
+      - raft_network
+      - db_network
+      - crdt_network
+    environment:
+      - CHAOS_SCENARIOS=network_partition,leader_failure,replica_lag
+      - CHAOS_INTERVAL=300
+      - RECOVERY_INTERVAL=120
+
+  # ===== MONITORING STACK =====
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - raft_network
+      - db_network
+      - crdt_network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - raft_network
+      - db_network
+      - crdt_network
+
+volumes:
+  etcd1_data:
+  etcd2_data:
+  etcd3_data:
+  postgres_primary_data:
+  postgres_replica1_data:
+  mongo1_data:
+  mongo2_data:
+  mongo3_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  raft_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  db_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+  crdt_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16

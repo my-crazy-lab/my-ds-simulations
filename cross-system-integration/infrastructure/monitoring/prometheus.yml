@@ -1,0 +1,92 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Event Bus Service
+  - job_name: 'event-bus'
+    static_configs:
+      - targets: ['event-bus:8090']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Intelligent Orchestrator Service
+  - job_name: 'intelligent-orchestrator'
+    static_configs:
+      - targets: ['intelligent-orchestrator:8091']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # ChatOps Engine Service
+  - job_name: 'chatops-engine'
+    static_configs:
+      - targets: ['chatops-engine:8092']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Predictive Scaler Service
+  - job_name: 'predictive-scaler'
+    static_configs:
+      - targets: ['predictive-scaler:8093']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 5s
+
+  # Data Quality Engine Service
+  - job_name: 'data-quality-engine'
+    static_configs:
+      - targets: ['data-quality-engine:8094']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 5s
+
+  # Maintenance Controller Service
+  - job_name: 'maintenance-controller'
+    static_configs:
+      - targets: ['maintenance-controller:8095']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 5s
+
+  # Redis Exporter (if available)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 15s
+    scrape_timeout: 5s
+
+  # Kafka Exporter (if available)
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+    scrape_interval: 15s
+    scrape_timeout: 5s
+
+  # Node Exporter (if available)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+    scrape_timeout: 5s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Example alerting rules (uncomment and customize as needed)
+# rule_files:
+#   - "alert_rules.yml"

@@ -1,0 +1,22 @@
+# Integration Test Dependencies
+
+# HTTP client
+httpx==0.25.2
+
+# Database drivers
+asyncpg==0.29.0
+motor==3.3.2
+
+# Redis client
+redis[hiredis]==5.0.1
+
+# Kafka client
+kafka-python==2.0.2
+
+# Testing framework
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# Utilities
+pydantic==2.5.0
+structlog==23.2.0

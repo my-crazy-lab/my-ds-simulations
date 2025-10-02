@@ -1,0 +1,460 @@
+version: '3.8'
+
+services:
+  # Databases
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: microservices
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka Ecosystem
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    container_name: schema-registry
+    depends_on:
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+      - schema-registry
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+
+  # CDC with Debezium
+  debezium:
+    image: debezium/connect:2.3
+    container_name: debezium
+    depends_on:
+      - kafka
+      - postgres
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: debezium
+      CONFIG_STORAGE_TOPIC: debezium_configs
+      OFFSET_STORAGE_TOPIC: debezium_offsets
+      STATUS_STORAGE_TOPIC: debezium_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+    volumes:
+      - ./docker/debezium/connectors:/kafka/connect/debezium-connector-postgres
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      COLLECTOR_OTLP_ENABLED: true
+    volumes:
+      - jaeger_data:/tmp
+
+  # Microservices
+  saga-orchestrator:
+    build:
+      context: ../services/saga-orchestrator
+      dockerfile: Dockerfile
+    container_name: saga-orchestrator
+    depends_on:
+      - postgres
+      - kafka
+      - redis
+      - jaeger
+    ports:
+      - "8001:8080"
+      - "9001:9090"
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/microservices?sslmode=disable
+      - KAFKA_BROKERS=kafka:29092
+      - REDIS_URL=redis://redis:6379
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  inventory-service:
+    build:
+      context: ../services/inventory-service
+      dockerfile: Dockerfile
+    container_name: inventory-service
+    depends_on:
+      - postgres
+      - kafka
+      - jaeger
+    ports:
+      - "8002:8080"
+      - "9002:9090"
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/microservices?sslmode=disable
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  payment-service:
+    build:
+      context: ../services/payment-service
+      dockerfile: Dockerfile
+    container_name: payment-service
+    depends_on:
+      - postgres
+      - kafka
+      - jaeger
+    ports:
+      - "8003:8080"
+      - "9003:9090"
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/microservices?sslmode=disable
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  notification-service:
+    build:
+      context: ../services/notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    depends_on:
+      - postgres
+      - kafka
+      - jaeger
+    ports:
+      - "8004:8080"
+      - "9004:9090"
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/microservices?sslmode=disable
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===== NEW MICROSERVICES =====
+
+  # Rust Transaction Coordinator Service
+  transaction-coordinator:
+    build:
+      context: ../services/transaction-coordinator
+      dockerfile: Dockerfile
+    ports:
+      - "8095:8080"
+    environment:
+      - RUST_LOG=info
+      - SERVER_ADDRESS=0.0.0.0:8080
+      - MONGODB_URL=mongodb://mongodb:27017/transaction_coordinator
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - mongodb
+      - redis
+      - kafka
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Java Spring Boot Account Service
+  account-service:
+    build:
+      context: ../services/account-service
+      dockerfile: Dockerfile
+    ports:
+      - "8096:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/account_service
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=postgres
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - SPRING_REDIS_HOST=redis
+      - SPRING_REDIS_PORT=6379
+      - AXON_AXONSERVER_SERVERS=axon-server:8124
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,metrics,prometheus
+    depends_on:
+      - postgres
+      - kafka
+      - redis
+      - axon-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Node.js TypeScript Billing Service
+  billing-service:
+    build:
+      context: ../services/billing-service
+      dockerfile: Dockerfile
+    ports:
+      - "8097:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MONGODB_URL=mongodb://mongodb:27017/billing_service
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+    depends_on:
+      - mongodb
+      - redis
+      - kafka
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Go Outbox Publisher Service
+  outbox-publisher:
+    build:
+      context: ../services/outbox-publisher
+      dockerfile: Dockerfile
+    ports:
+      - "8098:8080"
+    environment:
+      - GIN_MODE=release
+      - SERVER_PORT=8080
+      - POSTGRES_URL=postgres://postgres:postgres@postgres:5432/outbox_events?sslmode=disable
+      - MONGODB_URL=mongodb://mongodb:27017/outbox_events
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - OUTBOX_BATCH_SIZE=100
+      - OUTBOX_POLL_INTERVAL=5s
+      - OUTBOX_RETRY_INTERVAL=30s
+    depends_on:
+      - postgres
+      - mongodb
+      - redis
+      - kafka
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Python FastAPI Fraud Detection Service
+  fraud-detection-service:
+    build:
+      context: ../services/fraud-detection-service
+      dockerfile: Dockerfile
+    ports:
+      - "8099:8000"
+    environment:
+      - ENVIRONMENT=production
+      - HOST=0.0.0.0
+      - PORT=8000
+      - POSTGRES_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/fraud_detection
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - ML_MODEL_PATH=/app/models
+      - FRAUD_THRESHOLD=0.7
+      - HIGH_RISK_THRESHOLD=0.5
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+      - jaeger
+    volumes:
+      - fraud_models:/app/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ===== SUPPORTING INFRASTRUCTURE =====
+
+  # Axon Server for CQRS/Event Sourcing
+  axon-server:
+    image: axoniq/axonserver:latest
+    ports:
+      - "8024:8024"
+      - "8124:8124"
+    environment:
+      - AXONIQ_AXONSERVER_NAME=axon-server
+      - AXONIQ_AXONSERVER_HOSTNAME=axon-server
+    volumes:
+      - axon_data:/axonserver/data
+      - axon_events:/axonserver/events
+      - axon_config:/axonserver/config
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8024/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # MongoDB for document storage
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin123
+      - MONGO_INITDB_DATABASE=microservices
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongodb/init.js:/docker-entrypoint-initdb.d/init.js
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_logs:
+  prometheus_data:
+  grafana_data:
+  jaeger_data:
+  mongodb_data:
+  axon_data:
+  axon_events:
+  axon_config:
+  fraud_models:
+
+networks:
+  default:
+    name: microservices-network

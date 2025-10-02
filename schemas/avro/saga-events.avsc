@@ -1,0 +1,132 @@
+{
+  "type": "record",
+  "name": "SagaEvent",
+  "namespace": "com.microservices.saga.events",
+  "doc": "Saga orchestration events",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "doc": "Unique event identifier"
+    },
+    {
+      "name": "sagaId",
+      "type": "string",
+      "doc": "Saga instance identifier"
+    },
+    {
+      "name": "eventType",
+      "type": {
+        "type": "enum",
+        "name": "SagaEventType",
+        "symbols": [
+          "SAGA_STARTED",
+          "SAGA_COMPLETED",
+          "SAGA_FAILED",
+          "SAGA_COMPENSATED",
+          "STEP_STARTED",
+          "STEP_COMPLETED",
+          "STEP_FAILED",
+          "STEP_COMPENSATED"
+        ]
+      },
+      "doc": "Type of saga event"
+    },
+    {
+      "name": "sagaType",
+      "type": "string",
+      "doc": "Type of saga (e.g., order-processing)"
+    },
+    {
+      "name": "stepName",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Name of the saga step (if applicable)"
+    },
+    {
+      "name": "payload",
+      "type": {
+        "type": "record",
+        "name": "EventPayload",
+        "fields": [
+          {
+            "name": "orderId",
+            "type": ["null", "string"],
+            "default": null
+          },
+          {
+            "name": "userId",
+            "type": ["null", "string"],
+            "default": null
+          },
+          {
+            "name": "amount",
+            "type": ["null", "double"],
+            "default": null
+          },
+          {
+            "name": "currency",
+            "type": ["null", "string"],
+            "default": null
+          },
+          {
+            "name": "items",
+            "type": [
+              "null",
+              {
+                "type": "array",
+                "items": {
+                  "type": "record",
+                  "name": "OrderItem",
+                  "fields": [
+                    {"name": "sku", "type": "string"},
+                    {"name": "quantity", "type": "int"},
+                    {"name": "price", "type": "double"}
+                  ]
+                }
+              }
+            ],
+            "default": null
+          },
+          {
+            "name": "errorMessage",
+            "type": ["null", "string"],
+            "default": null
+          },
+          {
+            "name": "retryCount",
+            "type": ["null", "int"],
+            "default": null
+          }
+        ]
+      },
+      "doc": "Event payload data"
+    },
+    {
+      "name": "timestamp",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "Event timestamp"
+    },
+    {
+      "name": "correlationId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Correlation identifier for tracing"
+    },
+    {
+      "name": "causationId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Causation identifier"
+    },
+    {
+      "name": "version",
+      "type": "int",
+      "default": 1,
+      "doc": "Schema version"
+    }
+  ]
+}

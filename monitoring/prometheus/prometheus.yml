@@ -1,0 +1,253 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'microservices-local'
+    environment: 'development'
+
+rule_files:
+  - "rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Microservices
+  - job_name: 'saga-orchestrator'
+    static_configs:
+      - targets: ['saga-orchestrator:9090']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    honor_labels: true
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'saga-orchestrator'
+
+  - job_name: 'inventory-service'
+    static_configs:
+      - targets: ['inventory-service:9090']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    honor_labels: true
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'inventory-service'
+
+  - job_name: 'payment-service'
+    static_configs:
+      - targets: ['payment-service:9090']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    honor_labels: true
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'payment-service'
+
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['notification-service:9090']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    honor_labels: true
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'notification-service'
+
+  # Infrastructure
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka:9092']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Kafka JMX metrics
+  - job_name: 'kafka-jmx'
+    static_configs:
+      - targets: ['kafka:9999']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Schema Registry
+  - job_name: 'schema-registry'
+    static_configs:
+      - targets: ['schema-registry:8081']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Debezium Connect
+  - job_name: 'debezium'
+    static_configs:
+      - targets: ['debezium:8083']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Node Exporter (if running)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+
+  # cAdvisor for container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+# Recording rules for common queries
+recording_rules:
+  - name: microservices.rules
+    rules:
+      # Request rate
+      - record: microservices:http_requests_per_second
+        expr: rate(http_requests_total[5m])
+      
+      # Error rate
+      - record: microservices:http_error_rate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])
+      
+      # Response time percentiles
+      - record: microservices:http_request_duration_p95
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+      
+      - record: microservices:http_request_duration_p99
+        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
+      
+      # Saga metrics
+      - record: microservices:saga_success_rate
+        expr: rate(saga_completed_total{status="SUCCESS"}[5m]) / rate(saga_completed_total[5m])
+      
+      - record: microservices:saga_failure_rate
+        expr: rate(saga_completed_total{status="FAILED"}[5m]) / rate(saga_completed_total[5m])
+      
+      - record: microservices:saga_duration_p95
+        expr: histogram_quantile(0.95, rate(saga_duration_seconds_bucket[5m]))
+      
+      # Kafka metrics
+      - record: microservices:kafka_consumer_lag_max
+        expr: max by (topic, partition) (kafka_consumer_lag_sum)
+      
+      - record: microservices:kafka_messages_per_second
+        expr: rate(kafka_messages_in_total[5m])
+      
+      # Database metrics
+      - record: microservices:db_connections_active
+        expr: pg_stat_activity_count{state="active"}
+      
+      - record: microservices:db_query_duration_p95
+        expr: histogram_quantile(0.95, rate(pg_stat_statements_mean_time_bucket[5m]))
+      
+      # Outbox pattern metrics
+      - record: microservices:outbox_events_pending
+        expr: outbox_events_total{status="PENDING"}
+      
+      - record: microservices:outbox_processing_rate
+        expr: rate(outbox_events_processed_total[5m])
+      
+      # Circuit breaker metrics
+      - record: microservices:circuit_breaker_open_rate
+        expr: rate(circuit_breaker_state_changes_total{state="OPEN"}[5m])
+
+# Alerting rules
+alerting_rules:
+  - name: microservices.alerts
+    rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: microservices:http_error_rate > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.job }}"
+      
+      # High response time
+      - alert: HighResponseTime
+        expr: microservices:http_request_duration_p95 > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.job }}"
+      
+      # Saga failure rate
+      - alert: HighSagaFailureRate
+        expr: microservices:saga_failure_rate > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High saga failure rate"
+          description: "Saga failure rate is {{ $value | humanizePercentage }}"
+      
+      # Kafka consumer lag
+      - alert: HighKafkaConsumerLag
+        expr: microservices:kafka_consumer_lag_max > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Kafka consumer lag"
+          description: "Consumer lag is {{ $value }} messages for topic {{ $labels.topic }}"
+      
+      # Database connections
+      - alert: HighDatabaseConnections
+        expr: microservices:db_connections_active > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High database connection count"
+          description: "Active database connections: {{ $value }}"
+      
+      # Outbox events stuck
+      - alert: OutboxEventsStuck
+        expr: microservices:outbox_events_pending > 100
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox events stuck"
+          description: "{{ $value }} outbox events are pending processing"
+      
+      # Service down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service is down"
+          description: "{{ $labels.job }} service is down"
