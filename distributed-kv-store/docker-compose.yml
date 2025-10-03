@@ -1,0 +1,307 @@
+version: '3.8'
+
+services:
+  # KV Store Node 1
+  kvstore-node1:
+    build:
+      context: ./services/kvstore-node
+      dockerfile: Dockerfile
+    container_name: kvstore-node1
+    ports:
+      - "8081:8080"  # HTTP API
+      - "9081:9090"  # gRPC
+      - "7081:7070"  # Metrics
+    environment:
+      - NODE_ID=kvstore-node1
+      - NODE_ADDRESS=kvstore-node1:9090
+      - HTTP_PORT=8080
+      - GRPC_PORT=9090
+      - METRICS_PORT=7070
+      - DATA_DIR=/data
+      - CLUSTER_NODES=kvstore-node1:kvstore-node1:9090,kvstore-node2:kvstore-node2:9090,kvstore-node3:kvstore-node3:9090
+      - CONSISTENCY_MODE=hybrid
+      - REPLICATION_FACTOR=3
+      - READ_QUORUM=2
+      - WRITE_QUORUM=2
+      - ENABLE_RAFT=true
+      - ENABLE_QUORUM=true
+      - HINTED_HANDOFF_ENABLED=true
+      - READ_REPAIR_ENABLED=true
+      - ANTI_ENTROPY_ENABLED=true
+      - LOG_LEVEL=info
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - kvstore_node1_data:/data
+    networks:
+      - kvstore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # KV Store Node 2
+  kvstore-node2:
+    build:
+      context: ./services/kvstore-node
+      dockerfile: Dockerfile
+    container_name: kvstore-node2
+    ports:
+      - "8082:8080"
+      - "9082:9090"
+      - "7082:7070"
+    environment:
+      - NODE_ID=kvstore-node2
+      - NODE_ADDRESS=kvstore-node2:9090
+      - HTTP_PORT=8080
+      - GRPC_PORT=9090
+      - METRICS_PORT=7070
+      - DATA_DIR=/data
+      - CLUSTER_NODES=kvstore-node1:kvstore-node1:9090,kvstore-node2:kvstore-node2:9090,kvstore-node3:kvstore-node3:9090
+      - CONSISTENCY_MODE=hybrid
+      - REPLICATION_FACTOR=3
+      - READ_QUORUM=2
+      - WRITE_QUORUM=2
+      - ENABLE_RAFT=true
+      - ENABLE_QUORUM=true
+      - HINTED_HANDOFF_ENABLED=true
+      - READ_REPAIR_ENABLED=true
+      - ANTI_ENTROPY_ENABLED=true
+      - LOG_LEVEL=info
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - kvstore_node2_data:/data
+    networks:
+      - kvstore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # KV Store Node 3
+  kvstore-node3:
+    build:
+      context: ./services/kvstore-node
+      dockerfile: Dockerfile
+    container_name: kvstore-node3
+    ports:
+      - "8083:8080"
+      - "9083:9090"
+      - "7083:7070"
+    environment:
+      - NODE_ID=kvstore-node3
+      - NODE_ADDRESS=kvstore-node3:9090
+      - HTTP_PORT=8080
+      - GRPC_PORT=9090
+      - METRICS_PORT=7070
+      - DATA_DIR=/data
+      - CLUSTER_NODES=kvstore-node1:kvstore-node1:9090,kvstore-node2:kvstore-node2:9090,kvstore-node3:kvstore-node3:9090
+      - CONSISTENCY_MODE=hybrid
+      - REPLICATION_FACTOR=3
+      - READ_QUORUM=2
+      - WRITE_QUORUM=2
+      - ENABLE_RAFT=true
+      - ENABLE_QUORUM=true
+      - HINTED_HANDOFF_ENABLED=true
+      - READ_REPAIR_ENABLED=true
+      - ANTI_ENTROPY_ENABLED=true
+      - LOG_LEVEL=info
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - kvstore_node3_data:/data
+    networks:
+      - kvstore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Load Balancer for Client Requests
+  kvstore-lb:
+    image: nginx:alpine
+    container_name: kvstore-lb
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf
+    networks:
+      - kvstore-network
+    depends_on:
+      - kvstore-node1
+      - kvstore-node2
+      - kvstore-node3
+    restart: unless-stopped
+
+  # Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: kvstore-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/kvstore_rules.yml:/etc/prometheus/kvstore_rules.yml
+      - kvstore_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - kvstore-network
+    restart: unless-stopped
+
+  # Grafana for Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: kvstore-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=kvstore_admin
+    volumes:
+      - kvstore_grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - kvstore-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: kvstore-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - kvstore-network
+    restart: unless-stopped
+
+  # Consistency Checker Tool
+  consistency-checker:
+    build:
+      context: ./tools/consistency-checker
+      dockerfile: Dockerfile
+    container_name: kvstore-consistency-checker
+    environment:
+      - KVSTORE_ENDPOINTS=http://kvstore-node1:8080,http://kvstore-node2:8080,http://kvstore-node3:8080
+      - CHECK_INTERVAL=30s
+      - LINEARIZABILITY_TESTS=true
+      - EVENTUAL_CONSISTENCY_TESTS=true
+      - REPORT_ENDPOINT=http://prometheus:9090
+    networks:
+      - kvstore-network
+    depends_on:
+      - kvstore-node1
+      - kvstore-node2
+      - kvstore-node3
+    restart: unless-stopped
+
+  # Load Generator for Testing
+  load-generator:
+    build:
+      context: ./tools/load-generator
+      dockerfile: Dockerfile
+    container_name: kvstore-load-generator
+    environment:
+      - KVSTORE_ENDPOINT=http://kvstore-lb:80
+      - WORKLOAD_TYPE=mixed
+      - OPERATIONS_PER_SECOND=100
+      - DURATION=300s
+      - CONSISTENCY_LEVELS=strong:30,eventual:60,local:10
+      - KEY_DISTRIBUTION=uniform
+      - VALUE_SIZE=1024
+    networks:
+      - kvstore-network
+    depends_on:
+      - kvstore-lb
+    profiles:
+      - testing
+    restart: "no"
+
+  # Chaos Engineering Tool
+  chaos-monkey:
+    build:
+      context: ./tools/chaos-monkey
+      dockerfile: Dockerfile
+    container_name: kvstore-chaos-monkey
+    environment:
+      - CHAOS_ENABLED=false
+      - TARGET_SERVICES=kvstore-node1,kvstore-node2,kvstore-node3
+      - CHAOS_INTERVAL=60s
+      - NETWORK_PARTITION_PROBABILITY=0.1
+      - NODE_KILL_PROBABILITY=0.05
+      - SLOW_NETWORK_PROBABILITY=0.1
+      - DISK_FULL_PROBABILITY=0.02
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - kvstore-network
+    depends_on:
+      - kvstore-node1
+      - kvstore-node2
+      - kvstore-node3
+    restart: unless-stopped
+
+  # Anti-Entropy Service
+  anti-entropy:
+    build:
+      context: ./services/anti-entropy
+      dockerfile: Dockerfile
+    container_name: kvstore-anti-entropy
+    environment:
+      - KVSTORE_NODES=kvstore-node1:9090,kvstore-node2:9090,kvstore-node3:9090
+      - SYNC_INTERVAL=300s
+      - MERKLE_TREE_DEPTH=10
+      - BATCH_SIZE=1000
+      - REPAIR_ENABLED=true
+    networks:
+      - kvstore-network
+    depends_on:
+      - kvstore-node1
+      - kvstore-node2
+      - kvstore-node3
+    restart: unless-stopped
+
+volumes:
+  kvstore_node1_data:
+    driver: local
+  kvstore_node2_data:
+    driver: local
+  kvstore_node3_data:
+    driver: local
+  kvstore_prometheus_data:
+    driver: local
+  kvstore_grafana_data:
+    driver: local
+
+networks:
+  kvstore-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

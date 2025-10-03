@@ -1,0 +1,353 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Primary Database
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: core-banking-postgres-primary
+    environment:
+      POSTGRES_DB: core_banking
+      POSTGRES_USER: banking_user
+      POSTGRES_PASSWORD: secure_banking_pass
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: repl_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init-primary.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./infrastructure/postgres/create-tables.sql:/docker-entrypoint-initdb.d/02-tables.sql
+      - ./infrastructure/postgres/sample-data.sql:/docker-entrypoint-initdb.d/03-sample.sql
+      - ./infrastructure/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U banking_user -d core_banking"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - banking-network
+
+  # PostgreSQL Replica Database
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: core-banking-postgres-replica
+    environment:
+      POSTGRES_DB: core_banking
+      POSTGRES_USER: banking_user
+      POSTGRES_PASSWORD: secure_banking_pass
+      PGUSER: banking_user
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U banking_user -d core_banking"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - banking-network
+
+  # Redis for Distributed Locking and Caching
+  redis:
+    image: redis:7-alpine
+    container_name: core-banking-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - banking-network
+
+  # Kafka for Event Streaming
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: core-banking-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - banking-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: core-banking-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9093:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - banking-network
+
+  # Schema Registry for Kafka
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    container_name: core-banking-schema-registry
+    depends_on:
+      - kafka
+    ports:
+      - "8082:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - banking-network
+
+  # Prometheus for Metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: core-banking-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - banking-network
+
+  # Grafana for Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: core-banking-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=banking_admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./infrastructure/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    networks:
+      - banking-network
+
+  # Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: core-banking-jaeger
+    ports:
+      - "16687:16686"
+      - "14269:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    volumes:
+      - jaeger_data:/tmp
+    networks:
+      - banking-network
+
+  # Core Banking Services
+  ledger-service:
+    build:
+      context: ./services/ledger-service
+      dockerfile: Dockerfile
+    container_name: core-banking-ledger-service
+    ports:
+      - "8080:8080"
+      - "9080:9090"  # Metrics port
+    environment:
+      - DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-primary:5432/core_banking?sslmode=disable
+      - REPLICA_DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-replica:5432/core_banking?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=ledger-service
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - banking-network
+
+  account-service:
+    build:
+      context: ./services/account-service
+      dockerfile: Dockerfile
+    container_name: core-banking-account-service
+    ports:
+      - "8081:8080"
+      - "9081:9090"
+    environment:
+      - DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-primary:5432/core_banking?sslmode=disable
+      - REPLICA_DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-replica:5432/core_banking?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=account-service
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - banking-network
+
+  transaction-service:
+    build:
+      context: ./services/transaction-service
+      dockerfile: Dockerfile
+    container_name: core-banking-transaction-service
+    ports:
+      - "8082:8080"
+      - "9082:9090"
+    environment:
+      - DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-primary:5432/core_banking?sslmode=disable
+      - REPLICA_DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-replica:5432/core_banking?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=transaction-service
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - banking-network
+
+  reconciliation-service:
+    build:
+      context: ./services/reconciliation-service
+      dockerfile: Dockerfile
+    container_name: core-banking-reconciliation-service
+    ports:
+      - "8083:8080"
+      - "9083:9090"
+    environment:
+      - DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-primary:5432/core_banking?sslmode=disable
+      - REPLICA_DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-replica:5432/core_banking?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=reconciliation-service
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - banking-network
+
+  audit-service:
+    build:
+      context: ./services/audit-service
+      dockerfile: Dockerfile
+    container_name: core-banking-audit-service
+    ports:
+      - "8084:8080"
+      - "9084:9090"
+    environment:
+      - DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-primary:5432/core_banking?sslmode=disable
+      - REPLICA_DATABASE_URL=postgres://banking_user:secure_banking_pass@postgres-replica:5432/core_banking?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=audit-service
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - banking-network
+
+volumes:
+  postgres_primary_data:
+  postgres_replica_data:
+  redis_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_logs:
+  prometheus_data:
+  grafana_data:
+  jaeger_data:
+
+networks:
+  banking-network:
+    driver: bridge

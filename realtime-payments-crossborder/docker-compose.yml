@@ -1,0 +1,399 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for Payment Data
+  postgres:
+    image: postgres:15-alpine
+    container_name: realtime-postgres
+    environment:
+      POSTGRES_DB: realtime_payments
+      POSTGRES_USER: realtime_user
+      POSTGRES_PASSWORD: secure_realtime_pass
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./infrastructure/postgres/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql
+      - ./infrastructure/postgres/participants.sql:/docker-entrypoint-initdb.d/03-participants.sql
+      - ./infrastructure/postgres/test-data.sql:/docker-entrypoint-initdb.d/04-test-data.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U realtime_user -d realtime_payments"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - realtime-network
+
+  # Redis for High-speed Caching and Streams
+  redis:
+    image: redis:7-alpine
+    container_name: realtime-redis
+    ports:
+      - "6382:6379"
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - realtime-network
+
+  # Kafka for Event Streaming
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: realtime-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - realtime-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: realtime-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9095:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9095
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 12
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - realtime-network
+
+  # Schema Registry for Kafka
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    container_name: realtime-schema-registry
+    depends_on:
+      - kafka
+    ports:
+      - "8084:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - realtime-network
+
+  # InfluxDB for Time-series Metrics
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: realtime-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: realtime_admin
+      DOCKER_INFLUXDB_INIT_ORG: realtime-payments
+      DOCKER_INFLUXDB_INIT_BUCKET: metrics
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - realtime-network
+
+  # Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: realtime-prometheus
+    ports:
+      - "9093:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - realtime-network
+
+  # Grafana for Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: realtime-grafana
+    ports:
+      - "3003:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=realtime_admin
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./infrastructure/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+      - influxdb
+    networks:
+      - realtime-network
+
+  # Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: realtime-jaeger
+    ports:
+      - "16689:16686"
+      - "14271:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    volumes:
+      - jaeger_data:/tmp
+    networks:
+      - realtime-network
+
+  # Payment Router Service (Rust)
+  payment-router:
+    build:
+      context: ./services/payment-router
+      dockerfile: Dockerfile
+    container_name: realtime-payment-router
+    ports:
+      - "8451:8080"
+    environment:
+      - DATABASE_URL=postgres://realtime_user:secure_realtime_pass@postgres:5432/realtime_payments
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=payment-router
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - realtime-network
+
+  # Message Validator Service (Go)
+  message-validator:
+    build:
+      context: ./services/message-validator
+      dockerfile: Dockerfile
+    container_name: realtime-message-validator
+    ports:
+      - "8452:8080"
+    environment:
+      - DATABASE_URL=postgres://realtime_user:secure_realtime_pass@postgres:5432/realtime_payments
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=message-validator
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - realtime-network
+
+  # FX Engine Service (Rust)
+  fx-engine:
+    build:
+      context: ./services/fx-engine
+      dockerfile: Dockerfile
+    container_name: realtime-fx-engine
+    ports:
+      - "8453:8080"
+    environment:
+      - DATABASE_URL=postgres://realtime_user:secure_realtime_pass@postgres:5432/realtime_payments
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=fx-engine
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - realtime-network
+
+  # Correspondent Gateway Service (Go)
+  correspondent-gateway:
+    build:
+      context: ./services/correspondent-gateway
+      dockerfile: Dockerfile
+    container_name: realtime-correspondent-gateway
+    ports:
+      - "8454:8080"
+    environment:
+      - DATABASE_URL=postgres://realtime_user:secure_realtime_pass@postgres:5432/realtime_payments
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=correspondent-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - realtime-network
+
+  # Settlement Engine Service (Rust)
+  settlement-engine:
+    build:
+      context: ./services/settlement-engine
+      dockerfile: Dockerfile
+    container_name: realtime-settlement-engine
+    ports:
+      - "8455:8080"
+    environment:
+      - DATABASE_URL=postgres://realtime_user:secure_realtime_pass@postgres:5432/realtime_payments
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=settlement-engine
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - realtime-network
+
+  # Sanctions Screening Service (Python)
+  sanctions-screening:
+    build:
+      context: ./services/sanctions-screening
+      dockerfile: Dockerfile
+    container_name: realtime-sanctions-screening
+    ports:
+      - "8456:8080"
+    environment:
+      - DATABASE_URL=postgres://realtime_user:secure_realtime_pass@postgres:5432/realtime_payments
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=sanctions-screening
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - realtime-network
+
+  # Liquidity Manager Service (Go)
+  liquidity-manager:
+    build:
+      context: ./services/liquidity-manager
+      dockerfile: Dockerfile
+    container_name: realtime-liquidity-manager
+    ports:
+      - "8457:8080"
+    environment:
+      - DATABASE_URL=postgres://realtime_user:secure_realtime_pass@postgres:5432/realtime_payments
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=liquidity-manager
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - realtime-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_logs:
+  influxdb_data:
+  prometheus_data:
+  grafana_data:
+  jaeger_data:
+
+networks:
+  realtime-network:
+    driver: bridge

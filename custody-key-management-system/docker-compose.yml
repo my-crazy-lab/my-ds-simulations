@@ -1,0 +1,211 @@
+version: '3.8'
+
+services:
+  # PostgreSQL for custody records and audit trails
+  custody-postgres:
+    image: postgres:15-alpine
+    container_name: custody-postgres
+    environment:
+      POSTGRES_DB: custody_db
+      POSTGRES_USER: custody_user
+      POSTGRES_PASSWORD: secure_custody_pass
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "5434:5432"
+    volumes:
+      - custody_postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - custody-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U custody_user -d custody_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and session management
+  custody-redis:
+    image: redis:7-alpine
+    container_name: custody-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - custody_redis_data:/data
+    networks:
+      - custody-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # HSM Simulator for hardware security module
+  hsm-simulator:
+    image: openjdk:11-jre-slim
+    container_name: hsm-simulator
+    ports:
+      - "8510:8510"
+    volumes:
+      - ./services/hsm-simulator:/app
+      - hsm_keys:/app/keys
+    working_dir: /app
+    command: ["java", "-jar", "hsm-simulator.jar"]
+    networks:
+      - custody-network
+    environment:
+      - HSM_PORT=8510
+      - HSM_KEY_STORE=/app/keys
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8510/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Wallet Manager Service
+  wallet-manager:
+    build:
+      context: ./services/wallet-manager
+      dockerfile: Dockerfile
+    container_name: wallet-manager
+    ports:
+      - "8511:8511"
+    environment:
+      - PORT=8511
+      - POSTGRES_URL=postgres://custody_user:secure_custody_pass@custody-postgres:5432/custody_db?sslmode=disable
+      - REDIS_URL=redis://custody-redis:6379
+      - HSM_URL=http://hsm-simulator:8510
+      - LOG_LEVEL=info
+    depends_on:
+      custody-postgres:
+        condition: service_healthy
+      custody-redis:
+        condition: service_healthy
+      hsm-simulator:
+        condition: service_healthy
+    networks:
+      - custody-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8511/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Multi-Party Computation Service
+  mpc-service:
+    build:
+      context: ./services/mpc-service
+      dockerfile: Dockerfile
+    container_name: mpc-service
+    ports:
+      - "8512:8512"
+    environment:
+      - PORT=8512
+      - POSTGRES_URL=postgres://custody_user:secure_custody_pass@custody-postgres:5432/custody_db?sslmode=disable
+      - REDIS_URL=redis://custody-redis:6379
+      - MPC_THRESHOLD=2
+      - MPC_PARTIES=3
+    depends_on:
+      custody-postgres:
+        condition: service_healthy
+      custody-redis:
+        condition: service_healthy
+    networks:
+      - custody-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8512/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Approval Workflow Service
+  approval-service:
+    build:
+      context: ./services/approval-service
+      dockerfile: Dockerfile
+    container_name: approval-service
+    ports:
+      - "8513:8513"
+    environment:
+      - PORT=8513
+      - POSTGRES_URL=postgres://custody_user:secure_custody_pass@custody-postgres:5432/custody_db?sslmode=disable
+      - REDIS_URL=redis://custody-redis:6379
+      - WALLET_MANAGER_URL=http://wallet-manager:8511
+    depends_on:
+      custody-postgres:
+        condition: service_healthy
+      custody-redis:
+        condition: service_healthy
+      wallet-manager:
+        condition: service_healthy
+    networks:
+      - custody-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8513/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus for metrics
+  custody-prometheus:
+    image: prom/prometheus:latest
+    container_name: custody-prometheus
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - custody_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - custody-network
+
+  # Grafana for visualization
+  custody-grafana:
+    image: grafana/grafana:latest
+    container_name: custody-grafana
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=custody_admin
+    volumes:
+      - custody_grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - custody-network
+
+  # Jaeger for distributed tracing
+  custody-jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: custody-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - custody-network
+
+volumes:
+  custody_postgres_data:
+    driver: local
+  custody_redis_data:
+    driver: local
+  hsm_keys:
+    driver: local
+  custody_prometheus_data:
+    driver: local
+  custody_grafana_data:
+    driver: local
+
+networks:
+  custody-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16

@@ -1,0 +1,520 @@
+version: '3.8'
+
+services:
+  # US Region Nodes
+  geodatastore-us-1:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-us-1
+    hostname: geodatastore-us-1
+    ports:
+      - "8081:8080"  # HTTP API
+      - "9091:9090"  # gRPC
+    environment:
+      - NODE_ID=us-1
+      - REGION=us-east
+      - DATACENTER=us-east-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+    volumes:
+      - geodatastore_us_1_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  geodatastore-us-2:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-us-2
+    hostname: geodatastore-us-2
+    ports:
+      - "8082:8080"
+      - "9092:9090"
+    environment:
+      - NODE_ID=us-2
+      - REGION=us-east
+      - DATACENTER=us-east-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+    volumes:
+      - geodatastore_us_2_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  geodatastore-us-3:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-us-3
+    hostname: geodatastore-us-3
+    ports:
+      - "8083:8080"
+      - "9093:9090"
+    environment:
+      - NODE_ID=us-3
+      - REGION=us-east
+      - DATACENTER=us-east-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+    volumes:
+      - geodatastore_us_3_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # EU Region Nodes
+  geodatastore-eu-1:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-eu-1
+    hostname: geodatastore-eu-1
+    ports:
+      - "8084:8080"
+      - "9094:9090"
+    environment:
+      - NODE_ID=eu-1
+      - REGION=eu-west
+      - DATACENTER=eu-west-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+      - SIMULATED_LATENCY_MS=50  # Simulate cross-region latency
+    volumes:
+      - geodatastore_eu_1_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  geodatastore-eu-2:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-eu-2
+    hostname: geodatastore-eu-2
+    ports:
+      - "8085:8080"
+      - "9095:9090"
+    environment:
+      - NODE_ID=eu-2
+      - REGION=eu-west
+      - DATACENTER=eu-west-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+      - SIMULATED_LATENCY_MS=50
+    volumes:
+      - geodatastore_eu_2_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  geodatastore-eu-3:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-eu-3
+    hostname: geodatastore-eu-3
+    ports:
+      - "8086:8080"
+      - "9096:9090"
+    environment:
+      - NODE_ID=eu-3
+      - REGION=eu-west
+      - DATACENTER=eu-west-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+      - SIMULATED_LATENCY_MS=50
+    volumes:
+      - geodatastore_eu_3_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # APAC Region Nodes
+  geodatastore-apac-1:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-apac-1
+    hostname: geodatastore-apac-1
+    ports:
+      - "8087:8080"
+      - "9097:9090"
+    environment:
+      - NODE_ID=apac-1
+      - REGION=apac-southeast
+      - DATACENTER=apac-southeast-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+      - SIMULATED_LATENCY_MS=100  # Higher latency for APAC
+    volumes:
+      - geodatastore_apac_1_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  geodatastore-apac-2:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-apac-2
+    hostname: geodatastore-apac-2
+    ports:
+      - "8088:8080"
+      - "9098:9090"
+    environment:
+      - NODE_ID=apac-2
+      - REGION=apac-southeast
+      - DATACENTER=apac-southeast-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+      - SIMULATED_LATENCY_MS=100
+    volumes:
+      - geodatastore_apac_2_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  geodatastore-apac-3:
+    build: 
+      context: ./services/geodatastore-node
+      dockerfile: Dockerfile
+    container_name: geodatastore-apac-3
+    hostname: geodatastore-apac-3
+    ports:
+      - "8089:8080"
+      - "9099:9090"
+    environment:
+      - NODE_ID=apac-3
+      - REGION=apac-southeast
+      - DATACENTER=apac-southeast-1
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - REGION_NODES=geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - DATA_DIR=/data
+      - REPLICATION_FACTOR=3
+      - ANTI_ENTROPY_INTERVAL=30s
+      - GOSSIP_INTERVAL=1s
+      - READ_REPAIR_CHANCE=0.1
+      - VECTOR_CLOCK_MAX_SIZE=100
+      - SIMULATED_LATENCY_MS=100
+    volumes:
+      - geodatastore_apac_3_data:/data
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: geodatastore-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - geodatastore-network
+    depends_on:
+      - geodatastore-us-1
+      - geodatastore-us-2
+      - geodatastore-us-3
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Anti-Entropy Coordinator
+  anti-entropy-coordinator:
+    build:
+      context: ./services/anti-entropy-coordinator
+      dockerfile: Dockerfile
+    container_name: geodatastore-anti-entropy-coordinator
+    ports:
+      - "8090:8080"
+    environment:
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - SYNC_INTERVAL=60s
+      - MERKLE_TREE_DEPTH=10
+      - BATCH_SIZE=1000
+      - CROSS_REGION_SYNC_INTERVAL=300s
+    networks:
+      - geodatastore-network
+    depends_on:
+      - geodatastore-us-1
+      - geodatastore-eu-1
+      - geodatastore-apac-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # Conflict Resolution Service
+  conflict-resolver:
+    build:
+      context: ./services/conflict-resolver
+      dockerfile: Dockerfile
+    container_name: geodatastore-conflict-resolver
+    ports:
+      - "8091:8080"
+    environment:
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - RESOLUTION_STRATEGIES=lww,mv,custom
+      - CONFLICT_DETECTION_INTERVAL=30s
+      - MAX_CONFLICT_AGE=3600s
+    networks:
+      - geodatastore-network
+    depends_on:
+      - geodatastore-us-1
+      - geodatastore-eu-1
+      - geodatastore-apac-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: geodatastore-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/geodatastore_rules.yml:/etc/prometheus/geodatastore_rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - geodatastore-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: geodatastore-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=geodatastore_admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-worldmap-panel,grafana-piechart-panel
+    volumes:
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - geodatastore-network
+    depends_on:
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: geodatastore-jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # HTTP collector
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - geodatastore-network
+
+  # Testing and Development Tools
+  crdt-tester:
+    build:
+      context: ./tools/crdt-tester
+      dockerfile: Dockerfile
+    container_name: geodatastore-crdt-tester
+    environment:
+      - CLUSTER_NODES=geodatastore-us-1:9090,geodatastore-us-2:9090,geodatastore-us-3:9090,geodatastore-eu-1:9090,geodatastore-eu-2:9090,geodatastore-eu-3:9090,geodatastore-apac-1:9090,geodatastore-apac-2:9090,geodatastore-apac-3:9090
+      - TEST_MODE=idle  # idle, convergence, conflict, partition
+      - TEST_DURATION=300s
+      - CONCURRENT_WRITERS=10
+      - OPERATIONS_PER_SECOND=100
+    networks:
+      - geodatastore-network
+    depends_on:
+      - geodatastore-us-1
+      - geodatastore-eu-1
+      - geodatastore-apac-1
+    profiles:
+      - testing
+
+  partition-simulator:
+    build:
+      context: ./tools/partition-simulator
+      dockerfile: Dockerfile
+    container_name: geodatastore-partition-simulator
+    environment:
+      - CLUSTER_NODES=geodatastore-us-1,geodatastore-us-2,geodatastore-us-3,geodatastore-eu-1,geodatastore-eu-2,geodatastore-eu-3,geodatastore-apac-1,geodatastore-apac-2,geodatastore-apac-3
+      - PARTITION_MODE=idle  # idle, region_split, random, cascading
+      - PARTITION_DURATION=60s
+      - RECOVERY_DURATION=120s
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - geodatastore-network
+    depends_on:
+      - geodatastore-us-1
+      - geodatastore-eu-1
+      - geodatastore-apac-1
+    profiles:
+      - chaos
+
+volumes:
+  geodatastore_us_1_data:
+    driver: local
+  geodatastore_us_2_data:
+    driver: local
+  geodatastore_us_3_data:
+    driver: local
+  geodatastore_eu_1_data:
+    driver: local
+  geodatastore_eu_2_data:
+    driver: local
+  geodatastore_eu_3_data:
+    driver: local
+  geodatastore_apac_1_data:
+    driver: local
+  geodatastore_apac_2_data:
+    driver: local
+  geodatastore_apac_3_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  geodatastore-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

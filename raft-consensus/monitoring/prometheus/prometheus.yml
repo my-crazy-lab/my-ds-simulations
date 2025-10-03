@@ -1,0 +1,60 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "raft_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Raft Node 1
+  - job_name: 'raft-node1'
+    static_configs:
+      - targets: ['raft-node1:7070']
+    scrape_interval: 5s
+    metrics_path: /metrics
+    labels:
+      node_id: 'node1'
+      cluster: 'raft-consensus'
+
+  # Raft Node 2
+  - job_name: 'raft-node2'
+    static_configs:
+      - targets: ['raft-node2:7070']
+    scrape_interval: 5s
+    metrics_path: /metrics
+    labels:
+      node_id: 'node2'
+      cluster: 'raft-consensus'
+
+  # Raft Node 3
+  - job_name: 'raft-node3'
+    static_configs:
+      - targets: ['raft-node3:7070']
+    scrape_interval: 5s
+    metrics_path: /metrics
+    labels:
+      node_id: 'node3'
+      cluster: 'raft-consensus'
+
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter (if available)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+
+  # Docker metrics (if available)
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['docker-exporter:9323']
+    scrape_interval: 15s

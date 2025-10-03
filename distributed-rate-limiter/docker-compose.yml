@@ -1,0 +1,485 @@
+version: '3.8'
+
+services:
+  # Rate Limiter Controller - Main rate limiting logic and coordination
+  rate-limiter-controller:
+    build:
+      context: .
+      dockerfile: services/rate-limiter/Dockerfile
+    container_name: rate-limiter-controller
+    ports:
+      - "8080:8080"  # HTTP API
+      - "9080:9080"  # gRPC API
+      - "8081:8081"  # Metrics
+    environment:
+      - RATE_LIMITER_MODE=controller
+      - ETCD_ENDPOINTS=etcd-1:2379,etcd-2:2379,etcd-3:2379
+      - REDIS_CLUSTER=redis-1:6379,redis-2:6379,redis-3:6379
+      - POSTGRES_URL=postgres://ratelimiter:ratelimiter_pass@postgres:5432/ratelimiter_db
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9092,kafka-3:9092
+      - INFLUXDB_URL=http://influxdb:8086
+      - LOG_LEVEL=info
+      - METRICS_PORT=8081
+      - DISTRIBUTED_MODE=true
+      - GLOBAL_COORDINATION=true
+      - ADAPTIVE_RATE_LIMITING=true
+      - CIRCUIT_BREAKER_ENABLED=true
+      - LOAD_SHEDDING_ENABLED=true
+    depends_on:
+      - etcd-1
+      - etcd-2
+      - etcd-3
+      - redis-1
+      - redis-2
+      - redis-3
+      - postgres
+      - kafka-1
+      - influxdb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rate-limiter-network
+
+  # Backpressure Manager - Load monitoring and backpressure control
+  backpressure-manager:
+    build:
+      context: .
+      dockerfile: services/backpressure/Dockerfile
+    container_name: backpressure-manager
+    ports:
+      - "8082:8080"  # HTTP API
+      - "9082:9080"  # gRPC API
+      - "8083:8081"  # Metrics
+    environment:
+      - ETCD_ENDPOINTS=etcd-1:2379,etcd-2:2379,etcd-3:2379
+      - REDIS_CLUSTER=redis-1:6379,redis-2:6379,redis-3:6379
+      - INFLUXDB_URL=http://influxdb:8086
+      - LOG_LEVEL=info
+      - METRICS_PORT=8081
+      - LOAD_MONITORING_ENABLED=true
+      - CIRCUIT_BREAKER_ENABLED=true
+      - LOAD_SHEDDING_ENABLED=true
+      - ADAPTIVE_BACKPRESSURE=true
+    depends_on:
+      - etcd-1
+      - redis-1
+      - influxdb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rate-limiter-network
+
+  # Coordination Service - Global state management and consensus
+  coordination-service:
+    build:
+      context: .
+      dockerfile: services/coordination/Dockerfile
+    container_name: coordination-service
+    ports:
+      - "8084:8080"  # HTTP API
+      - "9084:9080"  # gRPC API
+      - "8085:8081"  # Metrics
+    environment:
+      - ETCD_ENDPOINTS=etcd-1:2379,etcd-2:2379,etcd-3:2379
+      - REDIS_CLUSTER=redis-1:6379,redis-2:6379,redis-3:6379
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9092,kafka-3:9092
+      - LOG_LEVEL=info
+      - METRICS_PORT=8081
+      - CONSENSUS_ENABLED=true
+      - EVENT_COORDINATION=true
+      - CONFLICT_RESOLUTION=true
+    depends_on:
+      - etcd-1
+      - redis-1
+      - kafka-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rate-limiter-network
+
+  # Traffic Gateway - Request proxying and load balancing
+  traffic-gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    container_name: traffic-gateway
+    ports:
+      - "8086:8080"  # HTTP API
+      - "8087:8081"  # Metrics
+      - "8443:8443"  # HTTPS
+    environment:
+      - RATE_LIMITER_ENDPOINT=rate-limiter-controller:9080
+      - BACKPRESSURE_ENDPOINT=backpressure-manager:9080
+      - LOG_LEVEL=info
+      - METRICS_PORT=8081
+      - LOAD_BALANCING_ENABLED=true
+      - SSL_TERMINATION=true
+      - REQUEST_TRANSFORMATION=true
+      - CACHING_ENABLED=true
+    depends_on:
+      - rate-limiter-controller
+      - backpressure-manager
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rate-limiter-network
+
+  # Rate Limiter Nodes - Distributed rate limiting nodes
+  rate-limiter-node-1:
+    build:
+      context: .
+      dockerfile: services/rate-limiter/Dockerfile
+    container_name: rate-limiter-node-1
+    ports:
+      - "8090:8080"  # HTTP API
+      - "8091:8081"  # Metrics
+    environment:
+      - RATE_LIMITER_MODE=node
+      - NODE_ID=node-1
+      - CONTROLLER_ENDPOINT=rate-limiter-controller:9080
+      - COORDINATION_ENDPOINT=coordination-service:9080
+      - REDIS_CLUSTER=redis-1:6379,redis-2:6379,redis-3:6379
+      - LOG_LEVEL=info
+      - METRICS_PORT=8081
+      - LOCAL_CACHE_SIZE=10000
+      - TOKEN_SYNC_INTERVAL=1s
+    depends_on:
+      - rate-limiter-controller
+      - coordination-service
+      - redis-1
+    networks:
+      - rate-limiter-network
+
+  rate-limiter-node-2:
+    build:
+      context: .
+      dockerfile: services/rate-limiter/Dockerfile
+    container_name: rate-limiter-node-2
+    ports:
+      - "8092:8080"
+      - "8093:8081"
+    environment:
+      - RATE_LIMITER_MODE=node
+      - NODE_ID=node-2
+      - CONTROLLER_ENDPOINT=rate-limiter-controller:9080
+      - COORDINATION_ENDPOINT=coordination-service:9080
+      - REDIS_CLUSTER=redis-1:6379,redis-2:6379,redis-3:6379
+      - LOG_LEVEL=info
+      - METRICS_PORT=8081
+      - LOCAL_CACHE_SIZE=10000
+      - TOKEN_SYNC_INTERVAL=1s
+    depends_on:
+      - rate-limiter-controller
+      - coordination-service
+      - redis-1
+    networks:
+      - rate-limiter-network
+
+  rate-limiter-node-3:
+    build:
+      context: .
+      dockerfile: services/rate-limiter/Dockerfile
+    container_name: rate-limiter-node-3
+    ports:
+      - "8094:8080"
+      - "8095:8081"
+    environment:
+      - RATE_LIMITER_MODE=node
+      - NODE_ID=node-3
+      - CONTROLLER_ENDPOINT=rate-limiter-controller:9080
+      - COORDINATION_ENDPOINT=coordination-service:9080
+      - REDIS_CLUSTER=redis-1:6379,redis-2:6379,redis-3:6379
+      - LOG_LEVEL=info
+      - METRICS_PORT=8081
+      - LOCAL_CACHE_SIZE=10000
+      - TOKEN_SYNC_INTERVAL=1s
+    depends_on:
+      - rate-limiter-controller
+      - coordination-service
+      - redis-1
+    networks:
+      - rate-limiter-network
+
+  # etcd Cluster - Distributed coordination and configuration
+  etcd-1:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: etcd-1
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    environment:
+      - ETCD_NAME=etcd-1
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-1:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd-1:2379
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=rate-limiter-cluster
+    volumes:
+      - etcd-1-data:/etcd-data
+    networks:
+      - rate-limiter-network
+
+  etcd-2:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: etcd-2
+    ports:
+      - "2389:2379"
+      - "2390:2380"
+    environment:
+      - ETCD_NAME=etcd-2
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-2:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd-2:2379
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=rate-limiter-cluster
+    volumes:
+      - etcd-2-data:/etcd-data
+    networks:
+      - rate-limiter-network
+
+  etcd-3:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: etcd-3
+    ports:
+      - "2399:2379"
+      - "2400:2380"
+    environment:
+      - ETCD_NAME=etcd-3
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-3:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd-3:2379
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=rate-limiter-cluster
+    volumes:
+      - etcd-3-data:/etcd-data
+    networks:
+      - rate-limiter-network
+
+  # Redis Cluster - High-speed caching and token storage
+  redis-1:
+    image: redis:7-alpine
+    container_name: redis-1
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --port 6379
+    volumes:
+      - redis-1-data:/data
+    networks:
+      - rate-limiter-network
+
+  redis-2:
+    image: redis:7-alpine
+    container_name: redis-2
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --port 6379
+    volumes:
+      - redis-2-data:/data
+    networks:
+      - rate-limiter-network
+
+  redis-3:
+    image: redis:7-alpine
+    container_name: redis-3
+    ports:
+      - "6381:6379"
+    command: redis-server --appendonly yes --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --port 6379
+    volumes:
+      - redis-3-data:/data
+    networks:
+      - rate-limiter-network
+
+  # PostgreSQL - Configuration and analytics storage
+  postgres:
+    image: postgres:15-alpine
+    container_name: rate-limiter-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=ratelimiter_db
+      - POSTGRES_USER=ratelimiter
+      - POSTGRES_PASSWORD=ratelimiter_pass
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init/postgres:/docker-entrypoint-initdb.d
+    networks:
+      - rate-limiter-network
+
+  # InfluxDB - Time-series metrics storage
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: rate-limiter-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=ratelimiter_admin_2024
+      - DOCKER_INFLUXDB_INIT_ORG=ratelimiter
+      - DOCKER_INFLUXDB_INIT_BUCKET=metrics
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=ratelimiter-admin-token
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - rate-limiter-network
+
+  # Kafka Cluster - Event streaming and coordination
+  kafka-1:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-1
+    ports:
+      - "9092:9092"
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-1:29092,PLAINTEXT_HOST://localhost:9092
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=3
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=3
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=2
+    depends_on:
+      - zookeeper
+    networks:
+      - rate-limiter-network
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-2
+    ports:
+      - "9093:9092"
+    environment:
+      - KAFKA_BROKER_ID=2
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://localhost:9093
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=3
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=3
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=2
+    depends_on:
+      - zookeeper
+    networks:
+      - rate-limiter-network
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-3
+    ports:
+      - "9094:9092"
+    environment:
+      - KAFKA_BROKER_ID=3
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://localhost:9094
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=3
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=3
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=2
+    depends_on:
+      - zookeeper
+    networks:
+      - rate-limiter-network
+
+  # Zookeeper - Kafka coordination
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: rate-limiter-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - rate-limiter-network
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: rate-limiter-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - rate-limiter-network
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: rate-limiter-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=ratelimiter_admin_2024
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - rate-limiter-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.47
+    container_name: rate-limiter-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - rate-limiter-network
+
+volumes:
+  etcd-1-data:
+  etcd-2-data:
+  etcd-3-data:
+  redis-1-data:
+  redis-2-data:
+  redis-3-data:
+  postgres-data:
+  influxdb-data:
+  zookeeper-data:
+  zookeeper-logs:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  rate-limiter-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.33.0.0/16

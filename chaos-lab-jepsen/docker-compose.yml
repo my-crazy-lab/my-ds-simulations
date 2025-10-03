@@ -1,0 +1,474 @@
+version: '3.8'
+
+services:
+  # Jepsen Control Node
+  jepsen-control:
+    build:
+      context: ./jepsen
+      dockerfile: Dockerfile
+    container_name: jepsen-control
+    hostname: control
+    privileged: true
+    ports:
+      - "8080:8080"   # Web UI
+      - "22:22"       # SSH
+    environment:
+      - JEPSEN_ROOT=/opt/jepsen
+      - LEIN_ROOT=1
+      - SSH_AUTH_SOCK=/ssh-agent
+    volumes:
+      - ./jepsen:/opt/jepsen
+      - ./results:/opt/jepsen/store
+      - ./tests:/opt/jepsen/tests
+      - ssh-agent:/ssh-agent
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - jepsen-net
+    depends_on:
+      - jepsen-n1
+      - jepsen-n2
+      - jepsen-n3
+      - jepsen-n4
+      - jepsen-n5
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Jepsen Test Nodes
+  jepsen-n1:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: jepsen-n1
+    hostname: n1
+    privileged: true
+    environment:
+      - NODE_ID=1
+      - CLUSTER_NODES=n1,n2,n3,n4,n5
+      - SSH_AUTH_SOCK=/ssh-agent
+    volumes:
+      - ssh-agent:/ssh-agent
+      - ./node/data:/data
+      - ./node/logs:/logs
+    networks:
+      jepsen-net:
+        aliases:
+          - n1
+    healthcheck:
+      test: ["CMD", "systemctl", "is-active", "sshd"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  jepsen-n2:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: jepsen-n2
+    hostname: n2
+    privileged: true
+    environment:
+      - NODE_ID=2
+      - CLUSTER_NODES=n1,n2,n3,n4,n5
+      - SSH_AUTH_SOCK=/ssh-agent
+    volumes:
+      - ssh-agent:/ssh-agent
+      - ./node/data:/data
+      - ./node/logs:/logs
+    networks:
+      jepsen-net:
+        aliases:
+          - n2
+    healthcheck:
+      test: ["CMD", "systemctl", "is-active", "sshd"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  jepsen-n3:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: jepsen-n3
+    hostname: n3
+    privileged: true
+    environment:
+      - NODE_ID=3
+      - CLUSTER_NODES=n1,n2,n3,n4,n5
+      - SSH_AUTH_SOCK=/ssh-agent
+    volumes:
+      - ssh-agent:/ssh-agent
+      - ./node/data:/data
+      - ./node/logs:/logs
+    networks:
+      jepsen-net:
+        aliases:
+          - n3
+    healthcheck:
+      test: ["CMD", "systemctl", "is-active", "sshd"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  jepsen-n4:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: jepsen-n4
+    hostname: n4
+    privileged: true
+    environment:
+      - NODE_ID=4
+      - CLUSTER_NODES=n1,n2,n3,n4,n5
+      - SSH_AUTH_SOCK=/ssh-agent
+    volumes:
+      - ssh-agent:/ssh-agent
+      - ./node/data:/data
+      - ./node/logs:/logs
+    networks:
+      jepsen-net:
+        aliases:
+          - n4
+    healthcheck:
+      test: ["CMD", "systemctl", "is-active", "sshd"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  jepsen-n5:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: jepsen-n5
+    hostname: n5
+    privileged: true
+    environment:
+      - NODE_ID=5
+      - CLUSTER_NODES=n1,n2,n3,n4,n5
+      - SSH_AUTH_SOCK=/ssh-agent
+    volumes:
+      - ssh-agent:/ssh-agent
+      - ./node/data:/data
+      - ./node/logs:/logs
+    networks:
+      jepsen-net:
+        aliases:
+          - n5
+    healthcheck:
+      test: ["CMD", "systemctl", "is-active", "sshd"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Target System: Distributed Database (etcd)
+  etcd-1:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: etcd-1
+    hostname: etcd-1
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    environment:
+      - ETCD_NAME=etcd-1
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-1:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd-1:2379
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LOG_LEVEL=info
+    volumes:
+      - etcd1-data:/etcd-data
+    networks:
+      - jepsen-net
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  etcd-2:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: etcd-2
+    hostname: etcd-2
+    ports:
+      - "2389:2379"
+      - "2390:2380"
+    environment:
+      - ETCD_NAME=etcd-2
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-2:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd-2:2379
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LOG_LEVEL=info
+    volumes:
+      - etcd2-data:/etcd-data
+    networks:
+      - jepsen-net
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  etcd-3:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: etcd-3
+    hostname: etcd-3
+    ports:
+      - "2399:2379"
+      - "2400:2380"
+    environment:
+      - ETCD_NAME=etcd-3
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd-3:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd-3:2379
+      - ETCD_INITIAL_CLUSTER=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LOG_LEVEL=info
+    volumes:
+      - etcd3-data:/etcd-data
+    networks:
+      - jepsen-net
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Target System: Redis Cluster
+  redis-1:
+    image: redis:7.2-alpine
+    container_name: redis-1
+    hostname: redis-1
+    ports:
+      - "7001:6379"
+      - "17001:16379"
+    command: >
+      redis-server
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --port 6379
+      --cluster-announce-port 6379
+      --cluster-announce-bus-port 16379
+    volumes:
+      - redis1-data:/data
+    networks:
+      - jepsen-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  redis-2:
+    image: redis:7.2-alpine
+    container_name: redis-2
+    hostname: redis-2
+    ports:
+      - "7002:6379"
+      - "17002:16379"
+    command: >
+      redis-server
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --port 6379
+      --cluster-announce-port 6379
+      --cluster-announce-bus-port 16379
+    volumes:
+      - redis2-data:/data
+    networks:
+      - jepsen-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  redis-3:
+    image: redis:7.2-alpine
+    container_name: redis-3
+    hostname: redis-3
+    ports:
+      - "7003:6379"
+      - "17003:16379"
+    command: >
+      redis-server
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --port 6379
+      --cluster-announce-port 6379
+      --cluster-announce-bus-port 16379
+    volumes:
+      - redis3-data:/data
+    networks:
+      - jepsen-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Monitoring and Visualization
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: chaos-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - jepsen-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: chaos-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=chaos_admin_2024
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - jepsen-net
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Network Chaos Controller
+  chaos-controller:
+    build:
+      context: ./chaos
+      dockerfile: Dockerfile
+    container_name: chaos-controller
+    hostname: chaos-controller
+    privileged: true
+    ports:
+      - "8081:8080"
+    environment:
+      - CHAOS_MODE=network
+      - TARGET_NODES=n1,n2,n3,n4,n5
+      - ETCD_ENDPOINTS=etcd-1:2379,etcd-2:2379,etcd-3:2379
+      - REDIS_ENDPOINTS=redis-1:6379,redis-2:6379,redis-3:6379
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./chaos/scripts:/scripts
+    networks:
+      - jepsen-net
+    depends_on:
+      - jepsen-n1
+      - jepsen-n2
+      - jepsen-n3
+      - jepsen-n4
+      - jepsen-n5
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Results Visualization Server
+  results-server:
+    build:
+      context: ./visualization
+      dockerfile: Dockerfile
+    container_name: results-server
+    ports:
+      - "8082:8080"
+    environment:
+      - RESULTS_PATH=/results
+      - SERVER_PORT=8080
+    volumes:
+      - ./results:/results:ro
+      - ./visualization/static:/static:ro
+    networks:
+      - jepsen-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  jepsen-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/16
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+
+volumes:
+  ssh-agent:
+    driver: local
+  etcd1-data:
+    driver: local
+  etcd2-data:
+    driver: local
+  etcd3-data:
+    driver: local
+  redis1-data:
+    driver: local
+  redis2-data:
+    driver: local
+  redis3-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

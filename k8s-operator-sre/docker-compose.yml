@@ -1,0 +1,454 @@
+version: '3.8'
+
+services:
+  # Kubernetes Cluster (Kind-based)
+  kind-cluster:
+    image: kindest/node:v1.28.0
+    container_name: k8s-control-plane
+    hostname: k8s-control-plane
+    privileged: true
+    ports:
+      - "6443:6443"   # Kubernetes API Server
+      - "30000-30100:30000-30100"  # NodePort range
+    environment:
+      - KUBECONFIG=/etc/kubernetes/admin.conf
+    volumes:
+      - kind-data:/var/lib/containerd
+      - ./config/kind-config.yaml:/kind/config.yaml:ro
+      - ./manifests:/manifests:ro
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "kubectl", "get", "nodes"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Custom Operator
+  webapp-operator:
+    build:
+      context: ./operator
+      dockerfile: Dockerfile
+    container_name: webapp-operator
+    environment:
+      - KUBECONFIG=/etc/kubeconfig/config
+      - OPERATOR_NAMESPACE=platform-system
+      - METRICS_ADDR=:8080
+      - ENABLE_LEADER_ELECTION=true
+      - LOG_LEVEL=info
+      - RECONCILE_INTERVAL=30s
+      - MAX_CONCURRENT_RECONCILES=5
+      - WEBHOOK_PORT=9443
+      - HEALTH_PROBE_BIND_ADDRESS=:8081
+    volumes:
+      - kubeconfig:/etc/kubeconfig:ro
+      - ./operator/config:/config:ro
+    networks:
+      - platform-network
+    depends_on:
+      - kind-cluster
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ArgoCD for GitOps
+  argocd-server:
+    image: argoproj/argocd:v2.8.4
+    container_name: argocd-server
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    environment:
+      - ARGOCD_SERVER_INSECURE=true
+      - ARGOCD_SERVER_ROOTPATH=/
+      - ARGOCD_SERVER_GRPC_WEB=true
+    volumes:
+      - argocd-data:/home/argocd
+      - ./config/argocd:/app/config:ro
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  argocd-repo-server:
+    image: argoproj/argocd:v2.8.4
+    container_name: argocd-repo-server
+    command: ["/usr/local/bin/argocd-repo-server"]
+    environment:
+      - ARGOCD_RECONCILIATION_TIMEOUT=180s
+      - ARGOCD_REPO_SERVER_LOGFORMAT=json
+    volumes:
+      - argocd-repos:/app/config/ssh
+      - ./config/argocd:/app/config:ro
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  argocd-application-controller:
+    image: argoproj/argocd:v2.8.4
+    container_name: argocd-application-controller
+    command: ["/usr/local/bin/argocd-application-controller"]
+    environment:
+      - ARGOCD_CONTROLLER_REPLICAS=1
+      - ARGOCD_RECONCILIATION_TIMEOUT=180s
+      - ARGOCD_HARD_RECONCILIATION_TIMEOUT=0s
+      - ARGOCD_CONTROLLER_LOGFORMAT=json
+    volumes:
+      - argocd-data:/home/argocd
+      - kubeconfig:/etc/kubeconfig:ro
+    networks:
+      - platform-network
+    depends_on:
+      - kind-cluster
+
+  # Tekton Pipelines
+  tekton-controller:
+    image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/controller:v0.53.0
+    container_name: tekton-controller
+    environment:
+      - SYSTEM_NAMESPACE=tekton-pipelines
+      - CONFIG_LOGGING_NAME=config-logging
+      - CONFIG_OBSERVABILITY_NAME=config-observability
+      - METRICS_DOMAIN=tekton.dev/pipeline
+    volumes:
+      - kubeconfig:/etc/kubeconfig:ro
+      - ./config/tekton:/config:ro
+    networks:
+      - platform-network
+    depends_on:
+      - kind-cluster
+
+  tekton-webhook:
+    image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/webhook:v0.53.0
+    container_name: tekton-webhook
+    ports:
+      - "8443:8443"
+    environment:
+      - SYSTEM_NAMESPACE=tekton-pipelines
+      - CONFIG_LOGGING_NAME=config-logging
+      - WEBHOOK_SERVICE_NAME=tekton-pipelines-webhook
+      - WEBHOOK_SECRET_NAME=webhook-certs
+    volumes:
+      - kubeconfig:/etc/kubeconfig:ro
+      - ./config/tekton:/config:ro
+    networks:
+      - platform-network
+    depends_on:
+      - kind-cluster
+
+  # Prometheus for Monitoring
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: platform-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--web.enable-remote-write-receiver'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Grafana for Visualization
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: platform-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=platform_admin_2024
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-kubernetes-app,grafana-piechart-panel
+      - GF_FEATURE_TOGGLES_ENABLE=ngalert
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - prometheus
+
+  # AlertManager for Alerting
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: platform-alertmanager
+    ports:
+      - "9093:9093"
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--cluster.listen-address=0.0.0.0:9094'
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.49
+    container_name: platform-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:16686/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # OPA Gatekeeper for Policy Management
+  opa-gatekeeper:
+    image: openpolicyagent/gatekeeper:v3.14.0
+    container_name: opa-gatekeeper
+    environment:
+      - GATEKEEPER_NAMESPACE=gatekeeper-system
+      - LOG_LEVEL=INFO
+      - AUDIT_INTERVAL=60
+      - CONSTRAINT_VIOLATIONS_LIMIT=20
+      - AUDIT_FROM_CACHE=false
+    volumes:
+      - kubeconfig:/etc/kubeconfig:ro
+      - ./config/opa:/config:ro
+    networks:
+      - platform-network
+    depends_on:
+      - kind-cluster
+
+  # Falco for Runtime Security
+  falco:
+    image: falcosecurity/falco-no-driver:0.36.0
+    container_name: platform-falco
+    privileged: true
+    environment:
+      - FALCO_GRPC_ENABLED=true
+      - FALCO_GRPC_BIND_ADDRESS=0.0.0.0:5060
+      - FALCO_K8S_AUDIT_ENDPOINT=/k8s-audit
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock:ro
+      - /dev:/host/dev:ro
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+      - /etc:/host/etc:ro
+      - ./config/falco:/etc/falco:ro
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:5060"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Litmus for Chaos Engineering
+  litmus-server:
+    image: litmuschaos/litmusportal-server:3.3.0
+    container_name: litmus-server
+    ports:
+      - "9002:9002"
+      - "9003:9003"
+    environment:
+      - DB_SERVER=mongo:27017
+      - JWT_SECRET=litmus-portal@123
+      - EXTERNAL_AGENT=false
+      - SUBSCRIBER_IMAGE=litmuschaos/litmusportal-subscriber:3.3.0
+      - EVENT_TRACKER_IMAGE=litmuschaos/litmusportal-event-tracker:3.3.0
+      - ARGO_WORKFLOW_CONTROLLER_IMAGE=argoproj/workflow-controller:v3.4.4
+      - ARGO_WORKFLOW_EXECUTOR_IMAGE=argoproj/argoexec:v3.4.4
+      - LITMUS_CHAOS_OPERATOR_IMAGE=litmuschaos/chaos-operator:3.3.0
+      - LITMUS_CHAOS_RUNNER_IMAGE=litmuschaos/chaos-runner:3.3.0
+      - LITMUS_CHAOS_EXPORTER_IMAGE=litmuschaos/chaos-exporter:3.3.0
+    volumes:
+      - kubeconfig:/etc/kubeconfig:ro
+    networks:
+      - platform-network
+    depends_on:
+      - mongo
+      - kind-cluster
+
+  litmus-frontend:
+    image: litmuschaos/litmusportal-frontend:3.3.0
+    container_name: litmus-frontend
+    ports:
+      - "8081:8080"
+    environment:
+      - REACT_APP_BACKEND_SERVER_URL=http://localhost:9002
+      - REACT_APP_KB_CHAOS_URL=https://hub.litmuschaos.io
+    networks:
+      - platform-network
+    depends_on:
+      - litmus-server
+
+  # MongoDB for Litmus
+  mongo:
+    image: mongo:6.0
+    container_name: litmus-mongo
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Git Server for GitOps (Gitea)
+  gitea:
+    image: gitea/gitea:1.20.5
+    container_name: platform-gitea
+    ports:
+      - "3001:3000"
+      - "2222:22"
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__database__PATH=/data/gitea/gitea.db
+      - GITEA__server__DOMAIN=localhost
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__server__ROOT_URL=http://localhost:3001
+      - GITEA__security__INSTALL_LOCK=true
+      - GITEA__security__SECRET_KEY=changeme
+      - GITEA__security__INTERNAL_TOKEN=changeme
+    volumes:
+      - gitea-data:/data
+      - ./config/gitea:/data/gitea/conf:ro
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Registry for Container Images
+  registry:
+    image: registry:2.8
+    container_name: platform-registry
+    ports:
+      - "5000:5000"
+    environment:
+      - REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry
+      - REGISTRY_HTTP_ADDR=0.0.0.0:5000
+    volumes:
+      - registry-data:/var/lib/registry
+      - ./config/registry:/etc/docker/registry:ro
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/v2/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Platform CLI Tool
+  platform-cli:
+    build:
+      context: ./cli
+      dockerfile: Dockerfile
+    container_name: platform-cli
+    environment:
+      - KUBECONFIG=/etc/kubeconfig/config
+      - PLATFORM_NAMESPACE=platform-system
+      - ARGOCD_SERVER=argocd-server:8080
+      - PROMETHEUS_URL=http://prometheus:9090
+      - GRAFANA_URL=http://grafana:3000
+    volumes:
+      - kubeconfig:/etc/kubeconfig:ro
+      - ./cli/scripts:/scripts:ro
+      - ./examples:/examples:ro
+    networks:
+      - platform-network
+    profiles:
+      - tools
+    depends_on:
+      - kind-cluster
+      - argocd-server
+      - prometheus
+
+networks:
+  platform-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+volumes:
+  kind-data:
+    driver: local
+  kubeconfig:
+    driver: local
+  argocd-data:
+    driver: local
+  argocd-repos:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  alertmanager-data:
+    driver: local
+  mongo-data:
+    driver: local
+  gitea-data:
+    driver: local
+  registry-data:
+    driver: local

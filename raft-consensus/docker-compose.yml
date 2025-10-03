@@ -1,0 +1,260 @@
+version: '3.8'
+
+services:
+  # Raft Node 1 (Initial Leader)
+  raft-node1:
+    build:
+      context: ./services/raft-node
+      dockerfile: Dockerfile
+    container_name: raft-node1
+    ports:
+      - "8081:8080"  # HTTP API
+      - "9081:9090"  # gRPC
+      - "7081:7070"  # Metrics
+    environment:
+      - NODE_ID=node1
+      - NODE_ADDRESS=raft-node1:9090
+      - HTTP_PORT=8080
+      - GRPC_PORT=9090
+      - METRICS_PORT=7070
+      - DATA_DIR=/data
+      - WAL_DIR=/wal
+      - CLUSTER_NODES=node1:raft-node1:9090,node2:raft-node2:9090,node3:raft-node3:9090
+      - ELECTION_TIMEOUT=150ms
+      - HEARTBEAT_INTERVAL=50ms
+      - SNAPSHOT_INTERVAL=1000
+      - LOG_COMPACTION_THRESHOLD=10000
+      - LOG_LEVEL=info
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - raft_node1_data:/data
+      - raft_node1_wal:/wal
+    networks:
+      - raft-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Raft Node 2
+  raft-node2:
+    build:
+      context: ./services/raft-node
+      dockerfile: Dockerfile
+    container_name: raft-node2
+    ports:
+      - "8082:8080"
+      - "9082:9090"
+      - "7082:7070"
+    environment:
+      - NODE_ID=node2
+      - NODE_ADDRESS=raft-node2:9090
+      - HTTP_PORT=8080
+      - GRPC_PORT=9090
+      - METRICS_PORT=7070
+      - DATA_DIR=/data
+      - WAL_DIR=/wal
+      - CLUSTER_NODES=node1:raft-node1:9090,node2:raft-node2:9090,node3:raft-node3:9090
+      - ELECTION_TIMEOUT=150ms
+      - HEARTBEAT_INTERVAL=50ms
+      - SNAPSHOT_INTERVAL=1000
+      - LOG_COMPACTION_THRESHOLD=10000
+      - LOG_LEVEL=info
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - raft_node2_data:/data
+      - raft_node2_wal:/wal
+    networks:
+      - raft-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Raft Node 3
+  raft-node3:
+    build:
+      context: ./services/raft-node
+      dockerfile: Dockerfile
+    container_name: raft-node3
+    ports:
+      - "8083:8080"
+      - "9083:9090"
+      - "7083:7070"
+    environment:
+      - NODE_ID=node3
+      - NODE_ADDRESS=raft-node3:9090
+      - HTTP_PORT=8080
+      - GRPC_PORT=9090
+      - METRICS_PORT=7070
+      - DATA_DIR=/data
+      - WAL_DIR=/wal
+      - CLUSTER_NODES=node1:raft-node1:9090,node2:raft-node2:9090,node3:raft-node3:9090
+      - ELECTION_TIMEOUT=150ms
+      - HEARTBEAT_INTERVAL=50ms
+      - SNAPSHOT_INTERVAL=1000
+      - LOG_COMPACTION_THRESHOLD=10000
+      - LOG_LEVEL=info
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - raft_node3_data:/data
+      - raft_node3_wal:/wal
+    networks:
+      - raft-network
+    depends_on:
+      - prometheus
+      - jaeger
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Load Balancer for Client Requests
+  raft-lb:
+    image: nginx:alpine
+    container_name: raft-lb
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf
+    networks:
+      - raft-network
+    depends_on:
+      - raft-node1
+      - raft-node2
+      - raft-node3
+    restart: unless-stopped
+
+  # Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: raft-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - raft_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - raft-network
+    restart: unless-stopped
+
+  # Grafana for Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: raft-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=raft_admin
+    volumes:
+      - raft_grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - raft-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: raft-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - raft-network
+    restart: unless-stopped
+
+  # Chaos Engineering Tool
+  chaos-monkey:
+    build:
+      context: ./tools/chaos-monkey
+      dockerfile: Dockerfile
+    container_name: raft-chaos-monkey
+    environment:
+      - CHAOS_ENABLED=false
+      - TARGET_SERVICES=raft-node1,raft-node2,raft-node3
+      - CHAOS_INTERVAL=30s
+      - NETWORK_PARTITION_PROBABILITY=0.1
+      - NODE_KILL_PROBABILITY=0.05
+      - DISK_SLOW_PROBABILITY=0.1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - raft-network
+    depends_on:
+      - raft-node1
+      - raft-node2
+      - raft-node3
+    restart: unless-stopped
+
+  # Test Client for Load Generation
+  test-client:
+    build:
+      context: ./tools/test-client
+      dockerfile: Dockerfile
+    container_name: raft-test-client
+    environment:
+      - RAFT_ENDPOINT=http://raft-lb:80
+      - TEST_DURATION=60s
+      - CONCURRENT_CLIENTS=10
+      - OPERATIONS_PER_SECOND=100
+      - READ_WRITE_RATIO=70:30
+    networks:
+      - raft-network
+    depends_on:
+      - raft-lb
+    profiles:
+      - testing
+    restart: "no"
+
+volumes:
+  raft_node1_data:
+    driver: local
+  raft_node1_wal:
+    driver: local
+  raft_node2_data:
+    driver: local
+  raft_node2_wal:
+    driver: local
+  raft_node3_data:
+    driver: local
+  raft_node3_wal:
+    driver: local
+  raft_prometheus_data:
+    driver: local
+  raft_grafana_data:
+    driver: local
+
+networks:
+  raft-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

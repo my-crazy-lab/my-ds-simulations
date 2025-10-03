@@ -1,0 +1,472 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for Risk Data
+  postgres:
+    image: postgres:15-alpine
+    container_name: risk-postgres
+    environment:
+      POSTGRES_DB: market_risk_engine
+      POSTGRES_USER: risk_user
+      POSTGRES_PASSWORD: secure_risk_pass
+    ports:
+      - "5439:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./infrastructure/postgres/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql
+      - ./infrastructure/postgres/risk-models.sql:/docker-entrypoint-initdb.d/03-risk-models.sql
+      - ./infrastructure/postgres/test-data.sql:/docker-entrypoint-initdb.d/04-test-data.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U risk_user -d market_risk_engine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - risk-network
+
+  # Redis for High-speed Caching
+  redis:
+    image: redis:7-alpine
+    container_name: risk-redis
+    ports:
+      - "6385:6379"
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - risk-network
+
+  # InfluxDB for Time-series Risk Metrics
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: risk-influxdb
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=risk_admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=risk_influx_pass
+      - DOCKER_INFLUXDB_INIT_ORG=risk_org
+      - DOCKER_INFLUXDB_INIT_BUCKET=risk_metrics
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=risk_admin_token_12345
+    ports:
+      - "8087:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+      - influxdb_config:/etc/influxdb2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - risk-network
+
+  # Kafka for Event Streaming
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: risk-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - risk-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: risk-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9098:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9098
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 64
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - risk-network
+
+  # Schema Registry for Kafka
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    container_name: risk-schema-registry
+    depends_on:
+      - kafka
+    ports:
+      - "8087:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - risk-network
+
+  # Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: risk-prometheus
+    ports:
+      - "9096:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - risk-network
+
+  # Grafana for Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: risk-grafana
+    ports:
+      - "3007:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=risk_admin
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./infrastructure/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+      - influxdb
+    networks:
+      - risk-network
+
+  # Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: risk-jaeger
+    ports:
+      - "16692:16686"
+      - "14274:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    volumes:
+      - jaeger_data:/tmp
+    networks:
+      - risk-network
+
+  # P&L Calculator Service (Python with CUDA)
+  pnl-calculator:
+    build:
+      context: ./services/pnl-calculator
+      dockerfile: Dockerfile.cuda
+    container_name: risk-pnl-calculator
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    ports:
+      - "8491:8080"
+    environment:
+      - DATABASE_URL=postgresql://risk_user:secure_risk_pass@postgres:5432/market_risk_engine
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=risk_admin_token_12345
+      - INFLUXDB_ORG=risk_org
+      - INFLUXDB_BUCKET=risk_metrics
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=pnl-calculator
+      - GPU_ENABLED=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - risk-network
+
+  # VaR Engine Service (Python with GPU)
+  var-engine:
+    build:
+      context: ./services/var-engine
+      dockerfile: Dockerfile.cuda
+    container_name: risk-var-engine
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    ports:
+      - "8492:8080"
+    environment:
+      - DATABASE_URL=postgresql://risk_user:secure_risk_pass@postgres:5432/market_risk_engine
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=risk_admin_token_12345
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=var-engine
+      - GPU_ENABLED=true
+      - MONTE_CARLO_SIMULATIONS=100000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - risk-network
+
+  # Greeks Calculator Service (C++ with CUDA)
+  greeks-calculator:
+    build:
+      context: ./services/greeks-calculator
+      dockerfile: Dockerfile.cuda
+    container_name: risk-greeks-calculator
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    ports:
+      - "8493:8080"
+    environment:
+      - DATABASE_URL=postgresql://risk_user:secure_risk_pass@postgres:5432/market_risk_engine
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=greeks-calculator
+      - GPU_ENABLED=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - risk-network
+
+  # Position Manager Service (Go)
+  position-manager:
+    build:
+      context: ./services/position-manager
+      dockerfile: Dockerfile
+    container_name: risk-position-manager
+    ports:
+      - "8494:8080"
+    environment:
+      - DATABASE_URL=postgres://risk_user:secure_risk_pass@postgres:5432/market_risk_engine
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=position-manager
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - risk-network
+
+  # Risk Monitor Service (Go)
+  risk-monitor:
+    build:
+      context: ./services/risk-monitor
+      dockerfile: Dockerfile
+    container_name: risk-risk-monitor
+    ports:
+      - "8495:8080"
+    environment:
+      - DATABASE_URL=postgres://risk_user:secure_risk_pass@postgres:5432/market_risk_engine
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=risk_admin_token_12345
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=risk-monitor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - risk-network
+
+  # Margin Calculator Service (Java)
+  margin-calculator:
+    build:
+      context: ./services/margin-calculator
+      dockerfile: Dockerfile
+    container_name: risk-margin-calculator
+    ports:
+      - "8496:8080"
+    environment:
+      - DATABASE_URL=jdbc:postgresql://postgres:5432/market_risk_engine?user=risk_user&password=secure_risk_pass
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=margin-calculator
+      - JVM_OPTS=-Xmx4g -Xms2g
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - risk-network
+
+  # Stress Tester Service (Python)
+  stress-tester:
+    build:
+      context: ./services/stress-tester
+      dockerfile: Dockerfile
+    container_name: risk-stress-tester
+    ports:
+      - "8497:8080"
+    environment:
+      - DATABASE_URL=postgresql://risk_user:secure_risk_pass@postgres:5432/market_risk_engine
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=risk_admin_token_12345
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=stress-tester
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - risk-network
+
+  # Reporting Service (Go)
+  reporting-service:
+    build:
+      context: ./services/reporting-service
+      dockerfile: Dockerfile
+    container_name: risk-reporting-service
+    ports:
+      - "8498:8080"
+    environment:
+      - DATABASE_URL=postgres://risk_user:secure_risk_pass@postgres:5432/market_risk_engine
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:29092
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=risk_admin_token_12345
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+      - SERVICE_NAME=reporting-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - risk-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  influxdb_data:
+  influxdb_config:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_logs:
+  prometheus_data:
+  grafana_data:
+  jaeger_data:
+
+networks:
+  risk-network:
+    driver: bridge

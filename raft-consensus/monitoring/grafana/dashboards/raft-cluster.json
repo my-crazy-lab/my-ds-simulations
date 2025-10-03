@@ -1,0 +1,104 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Raft Consensus Cluster",
+    "tags": ["raft", "consensus", "distributed-systems"],
+    "style": "dark",
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Cluster Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(raft_state)",
+            "legendFormat": "Total Nodes"
+          },
+          {
+            "expr": "count(raft_state == 2)",
+            "legendFormat": "Leaders"
+          },
+          {
+            "expr": "count(raft_state == 0)",
+            "legendFormat": "Followers"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Current Term",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "max(raft_term_current)",
+            "legendFormat": "Current Term"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Node States",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "count by (state) (raft_state == 0)",
+            "legendFormat": "Followers"
+          },
+          {
+            "expr": "count by (state) (raft_state == 1)",
+            "legendFormat": "Candidates"
+          },
+          {
+            "expr": "count by (state) (raft_state == 2)",
+            "legendFormat": "Leaders"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Log Entries",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "raft_log_entries_total",
+            "legendFormat": "{{node_id}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Commit Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(raft_commits_total[5m])",
+            "legendFormat": "{{node_id}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Leader Elections",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(raft_leader_elections_total[5m])",
+            "legendFormat": "{{node_id}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "5s"
+  }
+}

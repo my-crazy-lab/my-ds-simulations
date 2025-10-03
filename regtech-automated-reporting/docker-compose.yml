@@ -1,0 +1,267 @@
+version: '3.8'
+
+services:
+  # PostgreSQL for regulatory data and audit trails
+  regtech-postgres:
+    image: postgres:15-alpine
+    container_name: regtech-postgres
+    environment:
+      POSTGRES_DB: regtech_db
+      POSTGRES_USER: regtech_user
+      POSTGRES_PASSWORD: secure_regtech_pass
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "5435:5432"
+    volumes:
+      - regtech_postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - regtech-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U regtech_user -d regtech_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Apache Kafka for event streaming
+  regtech-zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: regtech-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - regtech-network
+
+  regtech-kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: regtech-kafka
+    depends_on:
+      - regtech-zookeeper
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: regtech-zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://regtech-kafka:29092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - regtech-network
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for caching and session management
+  regtech-redis:
+    image: redis:7-alpine
+    container_name: regtech-redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - regtech_redis_data:/data
+    networks:
+      - regtech-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Elasticsearch for document storage and search
+  regtech-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    container_name: regtech-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9202:9200"
+    volumes:
+      - regtech_elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - regtech-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Event Ingestion Service
+  event-ingestion:
+    build:
+      context: ./services/event-ingestion
+      dockerfile: Dockerfile
+    container_name: event-ingestion
+    ports:
+      - "8514:8514"
+    environment:
+      - PORT=8514
+      - POSTGRES_URL=postgres://regtech_user:secure_regtech_pass@regtech-postgres:5432/regtech_db?sslmode=disable
+      - KAFKA_BROKERS=regtech-kafka:29092
+      - REDIS_URL=redis://regtech-redis:6379
+      - ELASTICSEARCH_URL=http://regtech-elasticsearch:9200
+      - LOG_LEVEL=info
+    depends_on:
+      regtech-postgres:
+        condition: service_healthy
+      regtech-kafka:
+        condition: service_healthy
+      regtech-redis:
+        condition: service_healthy
+      regtech-elasticsearch:
+        condition: service_healthy
+    networks:
+      - regtech-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8514/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Report Generation Service
+  report-generator:
+    build:
+      context: ./services/report-generator
+      dockerfile: Dockerfile
+    container_name: report-generator
+    ports:
+      - "8515:8515"
+    environment:
+      - PORT=8515
+      - POSTGRES_URL=postgres://regtech_user:secure_regtech_pass@regtech-postgres:5432/regtech_db?sslmode=disable
+      - ELASTICSEARCH_URL=http://regtech-elasticsearch:9200
+      - KAFKA_BROKERS=regtech-kafka:29092
+      - REPORT_STORAGE_PATH=/app/reports
+    volumes:
+      - regtech_reports:/app/reports
+    depends_on:
+      regtech-postgres:
+        condition: service_healthy
+      regtech-elasticsearch:
+        condition: service_healthy
+      event-ingestion:
+        condition: service_healthy
+    networks:
+      - regtech-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8515/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Compliance Validation Service
+  compliance-validator:
+    build:
+      context: ./services/compliance-validator
+      dockerfile: Dockerfile
+    container_name: compliance-validator
+    ports:
+      - "8516:8516"
+    environment:
+      - PORT=8516
+      - POSTGRES_URL=postgres://regtech_user:secure_regtech_pass@regtech-postgres:5432/regtech_db?sslmode=disable
+      - KAFKA_BROKERS=regtech-kafka:29092
+      - REDIS_URL=redis://regtech-redis:6379
+    depends_on:
+      regtech-postgres:
+        condition: service_healthy
+      regtech-kafka:
+        condition: service_healthy
+      regtech-redis:
+        condition: service_healthy
+    networks:
+      - regtech-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8516/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Schema Registry for event schema management
+  regtech-schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    container_name: regtech-schema-registry
+    depends_on:
+      - regtech-kafka
+    ports:
+      - "8082:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: regtech-schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: regtech-kafka:29092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - regtech-network
+
+  # Prometheus for metrics
+  regtech-prometheus:
+    image: prom/prometheus:latest
+    container_name: regtech-prometheus
+    ports:
+      - "9093:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - regtech_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - regtech-network
+
+  # Grafana for visualization
+  regtech-grafana:
+    image: grafana/grafana:latest
+    container_name: regtech-grafana
+    ports:
+      - "3003:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=regtech_admin
+    volumes:
+      - regtech_grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - regtech-network
+
+  # Jaeger for distributed tracing
+  regtech-jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: regtech-jaeger
+    ports:
+      - "16687:16686"
+      - "14269:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - regtech-network
+
+volumes:
+  regtech_postgres_data:
+    driver: local
+  regtech_redis_data:
+    driver: local
+  regtech_elasticsearch_data:
+    driver: local
+  regtech_reports:
+    driver: local
+  regtech_prometheus_data:
+    driver: local
+  regtech_grafana_data:
+    driver: local
+
+networks:
+  regtech-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.26.0.0/16
