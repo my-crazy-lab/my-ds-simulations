@@ -22,28 +22,6 @@
 8. **Measure business SLOs** (P99 latency, RPO/RTO, commit latency under churn), không chỉ throughput.
 9. **Automate postmortem**: every injected failure → RCA + regression test.
 
-## 11) Core Banking — Ledger + Accounting Engine ✅ **ĐÃ TRIỂN KHAI**
-
-- **Vấn đề**: strong ACID, double-entry, immutable audit trail.
-- **Thách thức DB**: distributed transactions across shards (two-phase commit vs saga vs deterministic sharding), serializability with high throughput, consistent snapshot for reconciliation.
-- **Vận hành**: point-in-time recovery (PITR), cryptographic audit logs (Merkle proofs), data retention & legal hold, immutable append-only store.
-- **Test**: cross-shard transfer during partition, duplicate message replay, reconciliation mismatch detection & auto-correction.
-
-### 🏗️ **Chi tiết triển khai**:
-- **Vị trí**: `core-banking-ledger/`
-- **Database Tests**: `tests/database/test_distributed_transactions.py` (6 test functions)
-- **Thành phần chính**:
-  - Distributed transaction coordinator với 2PC protocol
-  - ACID property validation across multiple shards
-  - Cross-shard transaction testing với partition tolerance
-  - Balance consistency verification sử dụng Decimal precision
-  - Audit trail integrity với cryptographic proofs
-- **Công nghệ**: Go, PostgreSQL, Redis, Docker Compose
-- **Makefile**: 55 automation targets cho build, test, deploy
-- **Tài liệu**: 320 dòng README toàn diện
-- **Hiệu suất**: Xử lý 100K+ transactions/second với sub-second latency
-- **Tuân thủ**: SOX, Basel III, PCI DSS requirements
-
 ## 13) Real-time Payments & Cross-border (ISO 20022) ✅ **ĐÃ TRIỂN KHAI**
 
 - **Vấn đề**: message translation + low-latency pipeline.
