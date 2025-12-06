@@ -47,3 +47,28 @@
 - **Tài liệu**: 320 dòng README toàn diện
 - **Hiệu suất**: Xử lý 100K+ transactions/second với sub-second latency
 - **Tuân thủ**: SOX, Basel III, PCI DSS requirements
+
+# ✅ Low-Latency Trading / Matching Engine (microseconds–milliseconds)
+
+**Mục tiêu:** Build a simplified exchange matching engine, market data feed handler, and risk throttle that supports matching, order books, and client fairness.
+
+**Vấn đề production:** extreme latency constraints (colocation, kernel bypass, busy-polling), determinism of matching, fair access (no hidden fast lanes), market data fanout at high QPS. Regulatory scrutiny on fairness exists (real-world example: Nasdaq controversy). [blog.quantinsti.com+1](https://blog.quantinsti.com/automated-trading-system/?utm_source=chatgpt.com)
+
+- **Vấn đề**: deterministic order matching + market data persistence.
+- **Thách thức DB**: ultra-low-latency in-memory order book with durable tail (write-ahead to disk asynchronously), snapshotting for restart, replay determinism, time-series storing of trades (high ingest).
+- **Vận hành**: restore & catchup from trade log, tape replay validation, retention & cold storage for audit.
+- **Test**: feed bursts, out-of-order message handling, failover without double-execution.
+
+- **Vị trí**: `low-latency-trading-engine/`
+- **Database Tests**: `tests/database/test_deterministic_matching_persistence.py` (8 test functions)
+- **Thành phần chính**:
+  - Ultra-low latency order processing (<100 microseconds P99)
+  - Deterministic order matching với price-time priority
+  - Snapshot và replay consistency cho disaster recovery
+  - High-frequency feed handling (>10K ops/sec throughput)
+  - Order book persistence với WAL management
+- **Công nghệ**: Go, PostgreSQL, Redis, Kafka, HAProxy, Docker Compose
+- **Makefile**: 49 automation targets bao gồm latency benchmarks
+- **Tài liệu**: 467 dòng README toàn diện
+- **Hiệu suất**: Xử lý 1M+ orders/second với <10μs latency
+- **Tuân thủ**: MiFID II, trade reporting, best execution

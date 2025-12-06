@@ -88,28 +88,6 @@
 - **Hiệu suất**: Monitor millions transactions real-time
 - **Tuân thủ**: BSA/AML, GDPR, KYC regulations
 
-## 16) Low-Latency Trading / Matching Engine ✅ **ĐÃ TRIỂN KHAI**
-
-- **Vấn đề**: deterministic order matching + market data persistence.
-- **Thách thức DB**: ultra-low-latency in-memory order book with durable tail (write-ahead to disk asynchronously), snapshotting for restart, replay determinism, time-series storing of trades (high ingest).
-- **Vận hành**: restore & catchup from trade log, tape replay validation, retention & cold storage for audit.
-- **Test**: feed bursts, out-of-order message handling, failover without double-execution.
-
-### 🏗️ **Chi tiết triển khai**:
-- **Vị trí**: `low-latency-trading-engine/`
-- **Database Tests**: `tests/database/test_deterministic_matching_persistence.py` (8 test functions)
-- **Thành phần chính**:
-  - Ultra-low latency order processing (<100 microseconds P99)
-  - Deterministic order matching với price-time priority
-  - Snapshot và replay consistency cho disaster recovery
-  - High-frequency feed handling (>10K ops/sec throughput)
-  - Order book persistence với WAL management
-- **Công nghệ**: Go, PostgreSQL, Redis, Kafka, HAProxy, Docker Compose
-- **Makefile**: 49 automation targets bao gồm latency benchmarks
-- **Tài liệu**: 467 dòng README toàn diện
-- **Hiệu suất**: Xử lý 1M+ orders/second với <10μs latency
-- **Tuân thủ**: MiFID II, trade reporting, best execution
-
 ## 17) Market Risk / Real-time Risk Engine ✅ **ĐÃ TRIỂN KHAI**
 
 - **Vấn đề**: stateful aggregation, deterministic replay for P&L.
