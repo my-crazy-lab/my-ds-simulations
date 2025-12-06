@@ -44,28 +44,6 @@
 - **Hiệu suất**: Xử lý 100K+ transactions/second với sub-second latency
 - **Tuân thủ**: SOX, Basel III, PCI DSS requirements
 
-## 12) Payments / Acquiring Gateway ✅ **ĐÃ TRIỂN KHAI**
-
-- **Vấn đề**: tokenization, idempotency, PCI scope minimization.
-- **Thách thức DB**: separation of sensitive vs non-sensitive data (token vault), secure key management, high-throughput small writes (token create, auth), guaranteed-once settlement records.
-- **Vận hành**: HSM integration testing, purge/retention for PANs, strict logging without leakage.
-- **Test**: simulate PSP retries; ensure exactly-once settlement records; verify logs contain no PANs.
-
-### 🏗️ **Chi tiết triển khai**:
-- **Vị trí**: `payments-acquiring-gateway/`
-- **Database Tests**: `tests/database/test_tokenization_pci.py` (8 test functions)
-- **Thành phần chính**:
-  - Secure card tokenization với PCI scope minimization
-  - Exactly-once settlement record creation với idempotency
-  - PCI-compliant audit logging (không có sensitive data trong logs)
-  - PSP retry scenarios với idempotency guarantees
-  - Luhn algorithm validation cho test card generation
-- **Công nghệ**: Go, PostgreSQL, Redis, Kafka, Docker Compose
-- **Makefile**: 57 automation targets bao gồm PCI compliance checks
-- **Tài liệu**: 535 dòng README toàn diện
-- **Hiệu suất**: Xử lý millions payment transactions hàng ngày
-- **Tuân thủ**: PCI DSS Level 1, strong encryption, no PAN leakage
-
 ## 13) Real-time Payments & Cross-border (ISO 20022) ✅ **ĐÃ TRIỂN KHAI**
 
 - **Vấn đề**: message translation + low-latency pipeline.
