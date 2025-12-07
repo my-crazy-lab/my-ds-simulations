@@ -1266,9 +1266,3 @@ curl -X POST http://localhost:8080/api/v1/backpressure \
 This implementation provides a comprehensive foundation for understanding distributed rate limiting and backpressure systems, demonstrating advanced concepts including global coordination, adaptive algorithms, circuit breaking, load shedding, and traffic management used in production systems like Cloudflare, AWS API Gateway, Google Cloud Endpoints, and Netflix Zuul.
 
 ---
-
-## Cách tổ chức để học & “master” thực tế (kỹ thuật học)
-
-1. **Measure & Automate**: mỗi feature thêm phải có benchmarks + automated correctness tests (linearizability / history checking).
-2. **Small experiments then scale**: proof-of-concept → add persistence → add replication → add rebalance → add chaos.
-3. **Write postmortems & design docs**: cho mỗi failure scenario, viết RCA + design change.

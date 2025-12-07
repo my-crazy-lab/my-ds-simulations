@@ -84,7 +84,7 @@
 - **Vận hành**: manage feedback loop (human decisions → model retrain), cold-start for new policies, data retention/legal constraints.
 - **Test**: create synthetic coordinated fraud rings, measure detection latency and precision, simulate noisy/incorrect enrichment data.
 
-### 🏗️ **Chi tiết triển khai**:
+## 🏗️ **Exhance requests into db system**:
 - **Vị trí**: `fraud-detection-insurance/`
 - **Database Tests**: `tests/database/test_graph_ml_features.py` (8 test functions)
 - **Thành phần chính**:
@@ -110,7 +110,7 @@
 - **Vận hành**: replayable pipelines (CDC → materialization), report signing/timestamping, multi-format exports.
 - **Test**: generate historical reports from CDC replay, provenance traceability for every reported record.
 
-### 🏗️ **Chi tiết triển khai**:
+## 🏗️ **Exhance requests into db system**:
 - **Vị trí**: `regtech-automated-reporting/`
 - **Database Tests**: `tests/database/test_cdc_schema_evolution.py` (8 test functions)
 - **Thành phần chính**:
@@ -136,7 +136,7 @@
 - **Vận hành**: snapshotting cadence tradeoff (recompute cost vs recovery time), replayability for audits.
 - **Test**: late ticks, partial state loss, compare replayed vs live P&L.
 
-### 🏗️ **Chi tiết triển khai**:
+## 🏗️ **Exhance requests into db system**:
 - **Vị trí**: `market-risk-engine/`
 - **Database Tests**: `tests/database/test_stateful_aggregation_pnl.py` (8 test functions)
 - **Thành phần chính**:
@@ -162,7 +162,7 @@
 - **Vận hành**: translation versioning (schema registry), failover for translator, observability of translation errors.
 - **Test**: translation bug injection, replayability and reconciliation, ISO20022 schema validation under load.
 
-### 🏗️ **Chi tiết triển khai**:
+## 🏗️ **Exhance requests into db system**:
 - **Vị trí**: `realtime-payments-crossborder/`
 - **Database Tests**: `tests/database/test_iso20022_message_translation.py` (8 test functions)
 - **Thành phần chính**:
@@ -188,7 +188,7 @@
 - **Vận hành**: data retention & GDPR erasure (selective deletion), auditability of alerts, model drift monitoring.
 - **Test**: synthetic laundering patterns, late-arriving data effects on alerting, false positive/negative measurement.
 
-### 🏗️ **Chi tiết triển khai**:
+## 🏗️ **Exhance requests into db system**:
 - **Vị trí**: `aml-kyc-monitoring-system/`
 - **Database Tests**: `tests/database/test_graph_analytics_streaming.py` (10 test functions)
 - **Thành phần chính**:
@@ -214,7 +214,7 @@
 - **Vận hành**: replayable settlement runs, fallback/rollback semantics, settlement finality guarantees.
 - **Test**: participant offline mid-settlement, race between settlement and reversal, netting correctness proofs.
 
-### 🏗️ **Chi tiết triển khai**:
+## 🏗️ **Exhance requests into db system**:
 - **Vị trí**: `clearing-settlement-engine/`
 - **Database Tests**: `tests/database/test_atomic_settlement_netting.py` (8 test functions)
 - **Thành phần chính**:
@@ -240,7 +240,7 @@
 - **Vận hành**: key rotation without service outage, secure backups (encrypted backups & split-keys), proof-of-reserves reproducibility.
 - **Test**: signer node compromise simulation, key rotation drills, withdrawal queue consistency.
 
-### 🏗️ **Chi tiết triển khai**:
+## 🏗️ **Exhance requests into db system**:
 - **Vị trí**: `custody-key-management-system/`
 - **Database Tests**: `tests/database/test_hsm_multisig_coordination.py` (8 test functions)
 - **Thành phần chính**:
