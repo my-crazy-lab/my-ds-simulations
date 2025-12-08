@@ -1,7 +1,6 @@
-# Distributed Databases & Data Warehouse (CQRS, sharding, replication)
+# Distributed Databases & Data Warehouse (CQRS, sharding, replication) (Not started)
 
 > Tập trung: operational DBs + analytics stores, OLTP/OLAP separation, replication, sharding, migrations, backup & restore.
-> 
 
 ### 1) Online-offline sync & conflict resolution (Advanced)
 
@@ -1574,3 +1573,4 @@ clickhouse-client --query "
 - **Success metrics:** No lost/missed events; business invariants hold.
 - **Tools/gợi ý:** Use ordering token, Sagas/compensating actions, Outbox tables, Debezium to stream changes to Kafka, materialized read models.
 - **Test / Verify:** Simulate mid-transaction crashes; validate consistency.
+

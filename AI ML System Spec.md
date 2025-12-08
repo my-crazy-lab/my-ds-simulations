@@ -1,7 +1,6 @@
-# AI / ML System (chatbot, RAG, fine-tune pipelines)
+# AI / ML System (chatbot, RAG, fine-tune pipelines) (Not started)
 
 > Tập trung: pipeline thu thập conversation (Zalo/3rd party), xử lý ETL, lưu trữ, RAG index update, retrain/fine-tune, observability.
-> 
 
 ### 1) Data ingestion at scale + deduplication & normalization (Advanced)
 

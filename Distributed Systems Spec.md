@@ -1,18 +1,3 @@
-# Distributed Systems and Micro services Simulations 
-
-## Checklist hạ tầng & tooling (cần chuẩn bị trước khi bắt tay)
-
-- Environment: local k8s (kind/minikube/k3s) + 3+ VM nodes (Vagrant / cloud) để test real network partitions.
-- Tooling fault injection: `tc`/`netem`, `iptables`, Chaos Mesh / Chaos Monkey, Jepsen (dùng để viết test correctness). [GitHub+1](https://github.com/jepsen-io/jepsen?utm_source=chatgpt.com)
-- Observability: Prometheus + Grafana + OpenTelemetry/Jaeger + central log (Loki/ELK). [Tigera - Creator of Calico](https://www.tigera.io/learn/guides/devsecops/platform-engineering-on-kubernetes/?utm_source=chatgpt.com)
-- Load / perf: wrk/nginxbench, go-bench, rps generators, and pprof/perf for profiling.
-- Storage: local SSD/devices to simulate disk slowdowns, use cgroups to limit IOPS.
-- CI: pipeline để chạy smoke tests + chaos scenarios in pre-prod.
-
----
-
-## Danh sách project (tăng dần độ khó — làm theo thứ tự sẽ rất có hệ thống)
-
 ## 1) Raft *from scratch* + production features ✅ **IMPLEMENTED**
 
 **Goal:** Từ cốt lõi: implement Raft (leader election, log replication) rồi mở rộng snapshotting, log compaction, membership change.

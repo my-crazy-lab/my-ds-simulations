@@ -1,17 +1,3 @@
-# Database Systems and Data warehouse Simulations 
-
-## Gợi ý chung
-
-1. **Định nghĩa invariants DB rõ ràng** (serializability/causal/linearizability) trước khi code. Viết tests tự động kiểm tra invariants.
-2. **CDC + Outbox pattern** cho consistency giữa DB và event streams; test idempotency và dedupe.
-3. **Schema registry + migration framework** (backward+forward compatible), thử migration under load (in-place vs expand-contract).
-4. **Plan backup & PITR, and test restores** — thực hiện restore drills thường xuyên.
-5. **Observability của lưu trữ**: WAL size, compaction time, tombstone count, write amplification, repair time, GC pause, snapshot duration.
-6. **Resource isolation**: enforce IOPS/CPU quotas for DB processes to simulate noisy neighbor.
-7. **Run Jepsen-style experiments**: network partition + disk stalls + clock skew + process restart combos.
-8. **Measure business SLOs** (P99 latency, RPO/RTO, commit latency under churn), không chỉ throughput.
-9. **Automate postmortem**: every injected failure → RCA + regression test.
-
 ## 1) Raft from scratch + production features
 
 **Goal:** Build a production-grade Raft consensus implementation with advanced database features including durable WAL, snapshotting, log compaction, and membership changes.
